@@ -100,6 +100,24 @@ def read_data_points(file_path):
     return data_points, labels
 
 
+def compute_benchmarks(y_actual, y_predictor, positive_value):
+    true_positive = 0
+    false_positive = 0
+    true_negative = 0
+    false_negative = 0
+
+    for i in range(len(y_predictor)):
+        if y_predictor[i] == y_actual[i] and y_predictor[i] == positive_value:
+            true_positive += 1
+        elif y_predictor[i] == positive_value and y_predictor[i] != y_actual[i]:
+            false_positive += 1
+        elif y_predictor[i] != positive_value and y_predictor[i] == y_actual[i]:
+            true_negative += 1
+        elif y_predictor[i] != positive_value and y_predictor[i] != y_actual[i]:
+            false_negative += 1
+    return true_positive, false_positive, true_negative, false_negative
+
+
 train_requests, train_labels = read_data_points('data/csic2010/normalTrafficTraining.txt.csv')
 test_normal, test_normal_labels = read_data_points('data/csic2010/normalTrafficTest.txt.csv')
 test_anomalous, test_anomalous_labels = read_data_points('data/csic2010/anomalousTrafficTest.txt.csv')
@@ -110,11 +128,11 @@ test_labels = np.concatenate((test_normal_labels, test_anomalous_labels))
 dataset_requests = np.concatenate((train_requests, test_requests))
 dataset_labels = np.concatenate((train_labels, test_labels))
 
-print(dataset_requests)
-print(dataset_labels)
+# print(dataset_requests)
+# print(dataset_labels)
 
 counter = Counter(dataset_labels)
-print(counter)
+# print(counter)
 
 for label, _ in counter.items():
     row_index_x = where(dataset_labels == label)[0]
@@ -127,27 +145,42 @@ pyplot.show()
 ## create an outlier detection model
 model = OneClassSVM(gamma='scale', nu=0.01)
 
-# fit on overwhelming majority class, 0 means inlier, 1 means outlier
-# trainX = trainX[trainy == 0]
+# fit on overwhelming majority class (we can more easily generate legitimate traffic),
+# 0 means inlier, 1 means outlier
 model.fit(train_requests)
 
 # detect outliers in the test set
 label_predictor = model.predict(test_requests)
-label_predictor[label_predictor == -1] = 1
-label_predictor[label_predictor == 1] = 0
 
-# test_labels[test_labels == 1] = -1
-# test_labels[test_labels == 0] = 1
+# Make the outliers -1
+test_labels[test_labels == 1] = -1
+test_labels[test_labels == 0] = 1
 
-mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
-precision, recall, fscore, support = precision_recall_fscore_support(
+# Outliers are marked with -1
+precision, recall, f_score, support = precision_recall_fscore_support(
     y_true=test_labels,
     y_pred=label_predictor,
+    average='binary',
     pos_label=-1
 )
+mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
 
+print('Classes: ', test_labels)
 print('Precision: ', precision)
 print('Recall: ', recall)
-print('F-score: ', fscore)
+print('F-score: ', f_score)
 print('Support: ', support)
 print('MCC: ', mcc)
+
+tp, fp, tn, fn = compute_benchmarks(y_actual=test_labels, y_predictor=label_predictor, positive_value=-1)
+print(tp, fp, tn, fn)
+print('Manual precision: ', tp / (tp + fp))
+print('Manual recall: ', tp / (tp + fn))
+print('True positive rate:', tp / (tp + fn))
+print('False positive rate: ', fp / (fp + tn))
+
+test_counter = Counter(test_labels)
+predictor_counter = Counter(label_predictor)
+
+print('Actual counter', test_counter)
+print('Predictor counter', predictor_counter)
