@@ -184,3 +184,11 @@ predictor_counter = Counter(label_predictor)
 
 print('Actual counter', test_counter)
 print('Predictor counter', predictor_counter)
+
+from sklearn2pmml import sklearn2pmml, PMMLPipeline
+
+pipeline = PMMLPipeline([
+    ("classifier", model)
+])
+
+sklearn2pmml(pipeline, "occ_svm.pmml", with_repr=True)
