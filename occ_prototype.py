@@ -10,46 +10,6 @@ from numpy import where
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef
 from sklearn.svm import OneClassSVM
 
-sql2016_keywords = {
-    "abs", "acos", "all", "allocate", "alter", "and", "any", "are", "array", "array_agg", "array_max_cardinality", "as",
-    "asensitive", "asin", "asymmetric", "at", "atan", "atomic", "authorization", "avg", "begin", "begin_frame",
-    "begin_partition", "between", "bigint", "binary", "blob", "boolean", "both", "by", "call", "called", "cardinality",
-    "cascaded", "case", "cast", "ceil", "ceiling", "char", "character", "character_length", "char_length", "check",
-    "classifier", "clob", "close", "coalesce", "collate", "collect", "column", "commit", "condition", "connect",
-    "constraint", "contains", "convert", "copy", "corr", "corresponding", "cos", "cosh", "count", "covar_pop",
-    "covar_samp", "create", "cross", "cube", "cume_dist", "current", "current_catalog", "current_date",
-    "current_default_transform_group", "current_path", "current_role", "current_row", "current_schema", "current_time",
-    "current_timestamp", "current_transform_group_for_type", "current_user", "cursor", "cycle", "date", "day",
-    "deallocate", "dec", "decfloat", "decimal", "declare", "default", "define", "delete", "dense_rank", "deref",
-    "describe", "deterministic", "disconnect", "distinct", "double", "drop", "dynamic", "each", "element", "else",
-    "empty", "end", "end-exec", "end_frame", "end_partition", "equals", "escape", "every", "except", "exec",
-    "execute", "exists", "exp", "external", "extract", "false", "fetch", "filter", "first_value", "float", "floor",
-    "for", "foreign", "frame_row", "free", "from", "full", "function", "fusion", "get", "global", "grant", "group",
-    "grouping", "groups", "having", "hold", "hour", "identity", "in", "indicator", "initial", "inner", "inout",
-    "insensitive", "insert", "int", "integer", "intersect", "intersection", "interval", "into", "is", "join",
-    "json_array", "json_arrayagg", "json_exists", "json_object", "json_objectagg", "json_query", "json_table",
-    "json_table_primitive", "json_value", "lag", "language", "large", "last_value", "lateral", "lead", "leading",
-    "left", "like", "like_regex", "listagg", "ln", "local", "localtime", "localtimestamp", "log", "log10", "lower",
-    "match", "matches", "match_number", "match_recognize", "max", "member", "merge", "method", "min", "minute", "mod",
-    "modifies", "module", "month", "multiset", "national", "natural", "nchar", "nclob", "new", "no", "none",
-    "normalize", "not", "nth_value", "ntile", "null", "nullif", "numeric", "occurrences_regex", "octet_length", "of",
-    "offset", "old", "omit", "on", "one", "only", "open", "or", "order", "out", "outer", "over", "overlaps", "overlay",
-    "parameter", "partition", "pattern", "per", "percent", "percentile_cont", "percentile_disc", "percent_rank",
-    "period", "portion", "position", "position_regex", "power", "precedes", "precision", "prepare", "primary",
-    "procedure", "ptf", "range", "rank", "reads", "real", "recursive", "ref", "references", "referencing", "regr_avgx",
-    "regr_avgy", "regr_count", "regr_intercept", "regr_r2", "regr_slope", "regr_sxx", "regr_sxy", "regr_syy", "release",
-    "result", "return", "returns", "revoke", "right", "rollback", "rollup", "row", "rows", "row_number", "running",
-    "savepoint", "scope", "scroll", "search", "second", "seek", "select", "sensitive", "session_user", "set", "show",
-    "similar", "sin", "sinh", "skip", "smallint", "some", "specific", "specifictype", "sql", "sqlexception", "sqlstate",
-    "sqlwarning", "sqrt", "start", "static", "stddev_pop", "stddev_samp", "submultiset", "subset", "substring",
-    "substring_regex", "succeeds", "sum", "symmetric", "system", "system_time", "system_user", "table", "tablesample",
-    "tan", "tanh", "then", "time", "timestamp", "timezone_hour", "timezone_minute", "to", "trailing", "translate",
-    "translate_regex", "translation", "treat", "trigger", "trim", "trim_array", "true", "truncate", "uescape", "union",
-    "unique", "unknown", "unnest", "update", "upper", "user", "using", "value", "values", "value_of", "varbinary",
-    "varchar", "varying", "var_pop", "var_samp", "versioning", "when", "whenever", "where", "width_bucket", "window",
-    "with", "within", "without", "year"
-}
-
 
 def attribute_length(request_dict):
     method = request_dict.get('Method')
@@ -59,26 +19,176 @@ def attribute_length(request_dict):
         return len(request_dict.get('Body'))
 
 
-def sql_keywords(request_dict):
+def sql_keywords(request_dict, split_pattern='[ +&]'):
+    """Count the number of SQL keywords"""
+    sql2016_keywords = {
+        "abs", "acos", "all", "allocate", "alter", "and", "any", "are", "array", "array_agg", "array_max_cardinality",
+        "as",
+        "asensitive", "asin", "asymmetric", "at", "atan", "atomic", "authorization", "avg", "begin", "begin_frame",
+        "begin_partition", "between", "bigint", "binary", "blob", "boolean", "both", "by", "call", "called",
+        "cardinality",
+        "cascaded", "case", "cast", "ceil", "ceiling", "char", "character", "character_length", "char_length", "check",
+        "classifier", "clob", "close", "coalesce", "collate", "collect", "column", "commit", "condition", "connect",
+        "constraint", "contains", "convert", "copy", "corr", "corresponding", "cos", "cosh", "count", "covar_pop",
+        "covar_samp", "create", "cross", "cube", "cume_dist", "current", "current_catalog", "current_date",
+        "current_default_transform_group", "current_path", "current_role", "current_row", "current_schema",
+        "current_time",
+        "current_timestamp", "current_transform_group_for_type", "current_user", "cursor", "cycle", "date", "day",
+        "deallocate", "dec", "decfloat", "decimal", "declare", "default", "define", "delete", "dense_rank", "deref",
+        "describe", "deterministic", "disconnect", "distinct", "double", "drop", "dynamic", "each", "element", "else",
+        "empty", "end", "end-exec", "end_frame", "end_partition", "equals", "escape", "every", "except", "exec",
+        "execute", "exists", "exp", "external", "extract", "false", "fetch", "filter", "first_value", "float", "floor",
+        "for", "foreign", "frame_row", "free", "from", "full", "function", "fusion", "get", "global", "grant", "group",
+        "grouping", "groups", "having", "hold", "hour", "identity", "in", "indicator", "initial", "inner", "inout",
+        "insensitive", "insert", "int", "integer", "intersect", "intersection", "interval", "into", "is", "join",
+        "json_array", "json_arrayagg", "json_exists", "json_object", "json_objectagg", "json_query", "json_table",
+        "json_table_primitive", "json_value", "lag", "language", "large", "last_value", "lateral", "lead", "leading",
+        "left", "like", "like_regex", "listagg", "ln", "local", "localtime", "localtimestamp", "log", "log10", "lower",
+        "match", "matches", "match_number", "match_recognize", "max", "member", "merge", "method", "min", "minute",
+        "mod",
+        "modifies", "module", "month", "multiset", "national", "natural", "nchar", "nclob", "new", "no", "none",
+        "normalize", "not", "nth_value", "ntile", "null", "nullif", "numeric", "occurrences_regex", "octet_length",
+        "of",
+        "offset", "old", "omit", "on", "one", "only", "open", "or", "order", "out", "outer", "over", "overlaps",
+        "overlay",
+        "parameter", "partition", "pattern", "per", "percent", "percentile_cont", "percentile_disc", "percent_rank",
+        "period", "portion", "position", "position_regex", "power", "precedes", "precision", "prepare", "primary",
+        "procedure", "ptf", "range", "rank", "reads", "real", "recursive", "ref", "references", "referencing",
+        "regr_avgx",
+        "regr_avgy", "regr_count", "regr_intercept", "regr_r2", "regr_slope", "regr_sxx", "regr_sxy", "regr_syy",
+        "release",
+        "result", "return", "returns", "revoke", "right", "rollback", "rollup", "row", "rows", "row_number", "running",
+        "savepoint", "scope", "scroll", "search", "second", "seek", "select", "sensitive", "session_user", "set",
+        "show",
+        "similar", "sin", "sinh", "skip", "smallint", "some", "specific", "specifictype", "sql", "sqlexception",
+        "sqlstate",
+        "sqlwarning", "sqrt", "start", "static", "stddev_pop", "stddev_samp", "submultiset", "subset", "substring",
+        "substring_regex", "succeeds", "sum", "symmetric", "system", "system_time", "system_user", "table",
+        "tablesample",
+        "tan", "tanh", "then", "time", "timestamp", "timezone_hour", "timezone_minute", "to", "trailing", "translate",
+        "translate_regex", "translation", "treat", "trigger", "trim", "trim_array", "true", "truncate", "uescape",
+        "union",
+        "unique", "unknown", "unnest", "update", "upper", "user", "using", "value", "values", "value_of", "varbinary",
+        "varchar", "varying", "var_pop", "var_samp", "versioning", "when", "whenever", "where", "width_bucket",
+        "window",
+        "with", "within", "without", "year"
+    }
+
     method = request_dict.get('Method')
     if method == 'GET':
         query_params = request_dict.get('Query').lower()
-        words = re.split('[ +&]', query_params)
+        words = re.split(split_pattern, query_params)
     else:
         body = request_dict.get('Body').lower()
-        words = re.split('[ +&]', body)
+        words = re.split(split_pattern, body)
     appearances = count_appearances(words, sql2016_keywords)
     return sum(appearances.values())
 
 
+def total_length(request_dict):
+    """Counts the parameter names (including maybe custom headers that are tried) and value lengths to get
+     close to provide an approximation into the size of the actual raw request."""
+    length = 0
+    for key, value in request_dict.items():
+        if key == 'Class':
+            pass
+        length += len(key) + len(value)
+    return length
+
+
+def count_js_keywords(request_dict, split_pattern='[ +&]'):
+    javascript_keywords = {
+        "abstract", "alert", "all", "anchor", "anchors", "area", "arguments", "assign", "await", "blur", "boolean",
+        "break",
+        "button", "byte", "case", "catch", "charclass", "checkbox", "clearInterval", "clearTimeout",
+        "clientInformation",
+        "close", "closed", "confirm", "const", "constructor", "continue", "crypto", "debugger", "decodeURI",
+        "decodeURIComponent", "default", "defaultStatus", "delete", "do", "document", "double", "element", "elements",
+        "else", "embed", "embeds", "encodeURI", "encodeURIComponent", "enum", "escape", "eval", "event", "export",
+        "extends", "false", "fileUpload", "final", "finally", "float", "focus", "for", "form", "forms", "frame",
+        "frameRate", "frames", "function", "goto", "hidden", "history", "if", "image", "images", "implements", "import",
+        "in", "innerHeight", "innerWidth", "instanceof", "int", "interface", "layer", "layers", "let", "link",
+        "location",
+        "long", "mimeTypes", "native", "navigate", "navigator", "new", "null", "offscreenBuffering", "open", "opener",
+        "option", "outerHeight", "outerWidth", "package", "packages", "pageXOffset", "pageYOffset", "parent",
+        "parseFloat",
+        "parseInt", "password", "pkcs11" "plugin", "private", "prompt", "propertyIsEnum", "protected", "public",
+        "radio",
+        "reset", "return", "screenX", "screenY", "scroll", "secure", "select", "self", "setInterval", "setTimeout",
+        "short",
+        "static", "status", "submit", "super", "switch", "synchronized", "taint", "text", "textarea", "this", "throw",
+        "throws", "top", "transient", "true", "try", "typeof", "unescape", "untaint", "var", "void", "volatile",
+        "while",
+        "window", "with", "yield"
+    }
+
+    result = 0
+    for value in request_dict.values():
+        words = re.split(split_pattern, value)
+        result += sum(count_appearances(words, javascript_keywords).values())
+    return result
+
+
+def count_event_handlers(request_dict, split_pattern='[ +&]'):
+    """Count the number of HTML event handlers (e.g onclick, onmouseover etc.) in a request."""
+    event_handlers = {
+        "onactivate", "onafterprint", "onafterscriptexecute", "onanimationcancel", "onanimationend",
+        "onanimationiteration",
+        "onanimationstart", "onauxclick", "onbeforeactivate", "onbeforecopy", "onbeforecut", "onbeforedeactivate",
+        "onbeforepaste", "onbeforeprint", "onbeforescriptexecute", "onbeforeunload", "onbegin", "onblur", "onbounce",
+        "oncanplay", "oncanplaythrough", "onchange", "onclick", "onclose", "oncontextmenu", "oncopy", "oncuechange",
+        "oncut", "ondblclick", "ondeactivate", "ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover",
+        "ondragstart", "ondrop", "ondurationchange", "onend", "onended", "onerror", "onfinish", "onfocus", "onfocusin",
+        "onfocusout", "onfullscreenchange", "onhashchange", "oninput", "oninvalid", "onkeydown", "onkeypress",
+        "onkeyup",
+        "onload", "onloadeddata", "onloadedmetadata", "onloadend", "onloadstart", "onmessage", "onmousedown",
+        "onmouseenter", "onmouseleave", "onmousemove", "onmouseout", "onmouseover", "onmouseup", "onmousewheel",
+        "onmozfullscreenchange", "onpagehide", "onpageshow", "onpaste", "onpause", "onplay", "onplaying",
+        "onpointerdown",
+        "onpointerenter", "onpointerleave", "onpointermove", "onpointerout", "onpointerover", "onpointerrawupdate",
+        "onpointerup", "onpopstate", "onprogress", "onreadystatechange", "onrepeat", "onreset", "onresize", "onscroll",
+        "onsearch", "onseeked", "onseeking", "onselect", "onselectionchange", "onselectstart", "onshow", "onstart",
+        "onsubmit", "ontimeupdate", "ontoggle", "ontouchend", "ontouchmove", "ontouchstart", "ontransitioncancel",
+        "ontransitionend", "ontransitionrun", "ontransitionstart", "onunhandledrejection", "onunload", "onvolumechange",
+        "onwaiting", "onwebkitanimationend", "onwebkitanimationiteration", "onwebkitanimationstart",
+        "onwebkittransitionend", "onwheel"
+    }
+    result = 0
+    for value in request_dict.values():
+        words = re.split(split_pattern, value)
+        result += sum(count_appearances(words, event_handlers).values())
+    return result
+
+
+def count_unix_shell_keywords(request_dict, split_pattern='[ +&]'):
+    unix_keywords = {
+        "bash", "cat", "csh", "dash", "du", "echo", "grep", "less", "ls", "mknod", "more", "nc", "ps",
+        "rbash", "sh", "sleep", "su", "tcsh", "uname", "dev", "etc", "proc", "fd", "null", "stderr",
+        "stdin", "stdout", "tcp", "udp", "zero", "group", "master.passwd", "passwd", "pwd.db", "shadow",
+        "shells", "spwd.db", "self", "awk", "base64", "cat", "cc", "clang", "clang++", "curl", "diff",
+        "env", "fetch", "file", "find", "ftp", "gawk", "gcc", "head", "hexdump", "id", "less", "ln",
+        "mkfifo", "more", "nc", "ncat", "nice", "nmap", "perl", "php", "php5", "php7", "php-cgi", "printf",
+        "psed", "python", "python2", "python3", "ruby", "sed", "socat", "tail", "tee", "telnet", "top",
+        "uname", "wget", "who", "whoami", "xargs", "xxd", "yes", "bash", "curl", "ncat", "nmap", "perl",
+        "php", "python", "python2", "python3", "rbash", "ruby", "wget"}
+    result = 0
+    for value in request_dict.values():
+        words = re.split(split_pattern, value)
+        result += sum(count_appearances(words, unix_keywords).values())
+    return result
+
+
+# def powershell_keywords(request_dict, split_patter)
+
 def count_appearances(words, needles):
     appearances = dict()
     for word in words:
-        if word in needles:
-            if word not in appearances:
-                appearances[word] = 1
+        lowered_word = word.lower()
+        if lowered_word in needles:
+            if lowered_word not in appearances:
+                appearances[lowered_word] = 1
             else:
-                appearances[word] += 1
+                appearances[lowered_word] += 1
     return appearances
 
 
@@ -91,6 +201,10 @@ def read_data_points(file_path):
             np.array([
                 attribute_length(raw_request),
                 sql_keywords(raw_request),
+                total_length(raw_request),
+                count_js_keywords(raw_request),
+                count_event_handlers(raw_request),
+                count_unix_shell_keywords(raw_request),
             ])
             for raw_request in raw_requests
         ])
