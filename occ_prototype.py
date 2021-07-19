@@ -281,7 +281,7 @@ pyplot.legend()
 pyplot.show()
 
 ## create an outlier detection model
-model = OneClassSVM(gamma='scale', nu=0.01)
+model = OneClassSVM(gamma='auto', nu=0.1)
 
 # fit on overwhelming majority class (we can more easily generate legitimate traffic),
 # 0 means inlier, 1 means outlier
