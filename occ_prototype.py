@@ -7,7 +7,7 @@ from collections import Counter
 import numpy as np
 from matplotlib import pyplot
 from numpy import where
-from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef
+from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score
 from sklearn.svm import OneClassSVM
 
 
@@ -302,11 +302,13 @@ precision, recall, f_score, support = precision_recall_fscore_support(
     pos_label=-1
 )
 mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
+accuracy = accuracy_score(y_true=test_labels, y_pred=label_predictor)
 
 print('Classes: ', test_labels)
 print('Precision: ', precision)
 print('Recall: ', recall)
 print('F-score: ', f_score)
+print('Accuracy: ', accuracy)
 print('Support: ', support)
 print('MCC: ', mcc)
 
