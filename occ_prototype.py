@@ -180,6 +180,20 @@ def count_unix_shell_keywords(request_dict, split_pattern='[ +&]'):
 
 # def powershell_keywords(request_dict, split_patter)
 
+def byte_distribution(request_dict):
+    from statistics import mean, median
+    from math import floor
+
+    concatenated = bytearray()
+    for key, value in request_dict.items():
+        if key == 'Method' or key == 'Class':
+            pass
+        concatenated = concatenated + bytes(value, 'utf-8')
+
+    unique_bytes_count = len(set(concatenated))
+    return min(concatenated), max(concatenated), floor(mean(concatenated)), median(concatenated), unique_bytes_count
+
+
 def count_appearances(words, needles):
     appearances = dict()
     for word in words:
@@ -197,17 +211,27 @@ def read_data_points(file_path):
         reader = csv.DictReader(file)
         raw_requests = list(reader)
 
-        data_points = np.array([
-            np.array([
+        data_points_list = []
+        for raw_request in raw_requests:
+            min_byte, max_byte, mean_byte, median_byte, unique_bytes = byte_distribution(raw_request)
+
+            request_vector = np.array([
                 attribute_length(raw_request),
                 sql_keywords(raw_request),
                 total_length(raw_request),
                 count_js_keywords(raw_request),
                 count_event_handlers(raw_request),
                 count_unix_shell_keywords(raw_request),
+                min_byte,
+                max_byte,
+                mean_byte,
+                median_byte,
+                unique_bytes
             ])
-            for raw_request in raw_requests
-        ])
+
+            data_points_list.append(request_vector)
+
+        data_points = np.asarray(data_points_list)
         labels = np.array([
             0 if raw_request.get('Class') == 'Normal' else 1 for raw_request in raw_requests
         ])
