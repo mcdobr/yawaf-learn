@@ -7,6 +7,7 @@ from collections import Counter
 import numpy as np
 from matplotlib import pyplot
 from numpy import where
+from sklearn import preprocessing
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score
 from sklearn.svm import OneClassSVM
 
@@ -19,7 +20,7 @@ def attribute_length(request_dict):
         return len(request_dict.get('Body'))
 
 
-def sql_keywords(request_dict, split_pattern='[ +&]'):
+def sql_keywords(request_dict, split_pattern='[ +&=]'):
     """Count the number of SQL keywords"""
     sql2016_keywords = {
         "abs", "acos", "all", "allocate", "alter", "and", "any", "are", "array", "array_agg", "array_max_cardinality",
@@ -96,7 +97,7 @@ def total_length(request_dict):
     return length
 
 
-def count_js_keywords(request_dict, split_pattern='[ +&]'):
+def count_js_keywords(request_dict, split_pattern='[ +&=]'):
     javascript_keywords = {
         "abstract", "alert", "all", "anchor", "anchors", "area", "arguments", "assign", "await", "blur", "boolean",
         "break",
@@ -129,7 +130,7 @@ def count_js_keywords(request_dict, split_pattern='[ +&]'):
     return result
 
 
-def count_event_handlers(request_dict, split_pattern='[ +&]'):
+def count_event_handlers(request_dict, split_pattern='[ +&=]'):
     """Count the number of HTML event handlers (e.g onclick, onmouseover etc.) in a request."""
     event_handlers = {
         "onactivate", "onafterprint", "onafterscriptexecute", "onanimationcancel", "onanimationend",
@@ -160,7 +161,7 @@ def count_event_handlers(request_dict, split_pattern='[ +&]'):
     return result
 
 
-def count_unix_shell_keywords(request_dict, split_pattern='[ +&]'):
+def count_unix_shell_keywords(request_dict, split_pattern='[ +&=]'):
     unix_keywords = {
         "bash", "cat", "csh", "dash", "du", "echo", "grep", "less", "ls", "mknod", "more", "nc", "ps",
         "rbash", "sh", "sleep", "su", "tcsh", "uname", "dev", "etc", "proc", "fd", "null", "stderr",
@@ -256,26 +257,27 @@ def compute_benchmarks(y_actual, y_predictor, positive_value):
     return true_positive, false_positive, true_negative, false_negative
 
 
-train_requests, train_labels = read_data_points('data/csic2010/normalTrafficTraining.txt.csv')
-test_normal, test_normal_labels = read_data_points('data/csic2010/normalTrafficTest.txt.csv')
-test_anomalous, test_anomalous_labels = read_data_points('data/csic2010/anomalousTrafficTest.txt.csv')
+raw_train_request_data_points, train_labels = read_data_points('data/csic2010/normalTrafficTraining.txt.csv')
+raw_test_normal_data_points, test_normal_labels = read_data_points('data/csic2010/normalTrafficTest.txt.csv')
+raw_test_anomalous_data_points, test_anomalous_labels = read_data_points('data/csic2010/anomalousTrafficTest.txt.csv')
 
-test_requests = np.concatenate((test_normal, test_anomalous))
+raw_test_request_data_points = np.concatenate((raw_test_normal_data_points, raw_test_anomalous_data_points))
 test_labels = np.concatenate((test_normal_labels, test_anomalous_labels))
 
-dataset_requests = np.concatenate((train_requests, test_requests))
+# Scale the data points
+scaler = preprocessing.StandardScaler().fit(raw_train_request_data_points)
+train_request_data_points = scaler.transform(raw_train_request_data_points)
+test_request_data_points = scaler.transform(raw_test_request_data_points)
+
+dataset_request_data_points = np.concatenate((train_request_data_points, test_request_data_points))
 dataset_labels = np.concatenate((train_labels, test_labels))
 
-# print(dataset_requests)
-# print(dataset_labels)
-
 counter = Counter(dataset_labels)
-# print(counter)
 
 for label, _ in counter.items():
     row_index_x = where(dataset_labels == label)[0]
-    pyplot.scatter(dataset_requests[row_index_x, 0],
-                   dataset_requests[row_index_x, 1],
+    pyplot.scatter(dataset_request_data_points[row_index_x, 0],
+                   dataset_request_data_points[row_index_x, 1],
                    label=str(label))
 pyplot.legend()
 pyplot.show()
@@ -285,10 +287,10 @@ model = OneClassSVM(gamma='auto', nu=0.1)
 
 # fit on overwhelming majority class (we can more easily generate legitimate traffic),
 # 0 means inlier, 1 means outlier
-model.fit(train_requests)
+model.fit(train_request_data_points)
 
 # detect outliers in the test set
-label_predictor = model.predict(test_requests)
+label_predictor = model.predict(test_request_data_points)
 
 # Make the outliers -1
 test_labels[test_labels == 1] = -1
@@ -309,7 +311,6 @@ print('Precision: ', precision)
 print('Recall: ', recall)
 print('F-score: ', f_score)
 print('Accuracy: ', accuracy)
-print('Support: ', support)
 print('MCC: ', mcc)
 
 tp, fp, tn, fn = compute_benchmarks(y_actual=test_labels, y_predictor=label_predictor, positive_value=-1)
