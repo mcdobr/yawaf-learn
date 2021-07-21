@@ -2,11 +2,8 @@
 # Tutorial followed from https://machinelearningmastery.com/one-class-classification-algorithms/
 import csv
 import re
-from collections import Counter
 
 import numpy as np
-from matplotlib import pyplot
-from numpy import where
 from sklearn import preprocessing
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score
 from sklearn.svm import OneClassSVM
@@ -20,7 +17,7 @@ def attribute_length(request_dict):
         return len(request_dict.get('Body'))
 
 
-def sql_keywords(request_dict, split_pattern='[ +&=]'):
+def sql_keywords(request_dict, split_pattern='[ +&=<>/]+'):
     """Count the number of SQL keywords"""
     sql2016_keywords = {
         "abs", "acos", "all", "allocate", "alter", "and", "any", "are", "array", "array_agg", "array_max_cardinality",
@@ -97,7 +94,21 @@ def total_length(request_dict):
     return length
 
 
-def count_js_keywords(request_dict, split_pattern='[ +&=]'):
+def number_of_letters(request_dict):
+    result = 0
+    for key, value in request_dict.items():
+        result += sum(c.isalpha() for c in key) + sum(c.isalpha() for c in value)
+    return result
+
+
+def non_printable_characters(request_dict):
+    result = 0
+    for key, value in request_dict.items():
+        result += sum(not c.isprintable() for c in key) + sum(not c.isprintable() for c in value)
+    return result
+
+
+def count_js_keywords(request_dict, split_pattern='[ +&=<>/]+'):
     javascript_keywords = {
         "abstract", "alert", "all", "anchor", "anchors", "area", "arguments", "assign", "await", "blur", "boolean",
         "break",
@@ -124,13 +135,13 @@ def count_js_keywords(request_dict, split_pattern='[ +&=]'):
     }
 
     result = 0
-    for value in request_dict.values():
+    for key, value in request_dict.items():
         words = re.split(split_pattern, value)
         result += sum(count_appearances(words, javascript_keywords).values())
     return result
 
 
-def count_event_handlers(request_dict, split_pattern='[ +&=]'):
+def count_event_handlers(request_dict, split_pattern='[ +&=<>/]+'):
     """Count the number of HTML event handlers (e.g onclick, onmouseover etc.) in a request."""
     event_handlers = {
         "onactivate", "onafterprint", "onafterscriptexecute", "onanimationcancel", "onanimationend",
@@ -161,7 +172,29 @@ def count_event_handlers(request_dict, split_pattern='[ +&=]'):
     return result
 
 
-def count_unix_shell_keywords(request_dict, split_pattern='[ +&=]'):
+def count_html_tags(request_dict, split_pattern='[ +&=<>/]+'):
+    html_tags = {
+        "a", "abbr", "acronym", "address", "animate", "animatemotion", "animatetransform", "applet", "area",
+        "article", "aside", "audio", "b", "base", "basefont", "bdi", "bdo", "bgsound", "big", "blink",
+        "blockquote", "body", "br", "button", "canvas", "caption", "center", "cite", "code", "col", "colgroup",
+        "command", "content", "custom", "tags", "data", "datalist", "dd", "del", "details", "dfn", "dialog",
+        "dir", "div", "dl", "dt", "element", "em", "embed", "fieldset", "figcaption", "figure", "font",
+        "footer", "form", "frame", "frameset", "h1", "head", "header", "hgroup", "hr", "html", "i", "iframe",
+        "image", "img", "input", "ins", "isindex", "kbd", "keygen", "label", "legend", "li", "link", "listing",
+        "main", "map", "mark", "marquee", "menu", "menuitem", "meta", "meter", "multicol", "nav", "nextid",
+        "nobr", "noembed", "noframes", "noscript", "object", "ol", "optgroup", "option", "output", "p",
+        "param", "picture", "plaintext", "pre", "progress", "q", "rb", "rp", "rt", "rtc", "ruby", "s", "samp",
+        "script", "section", "select", "set", "shadow", "slot", "small", "source", "spacer", "span", "strike",
+        "strong", "style", "sub", "summary", "sup", "svg", "table", "tbody", "td", "template", "textarea",
+        "tfoot", "th", "thead", "time", "title", "tr", "track", "tt", "u", "ul", "var", "video", "wbr", "xmp"}
+    result = 0
+    for value in request_dict.values():
+        words = re.split(split_pattern, value)
+        result += sum(count_appearances(words, html_tags).values())
+    return result
+
+
+def count_unix_shell_keywords(request_dict, split_pattern='[ +&=<>/]+'):
     unix_keywords = {
         "bash", "cat", "csh", "dash", "du", "echo", "grep", "less", "ls", "mknod", "more", "nc", "ps",
         "rbash", "sh", "sleep", "su", "tcsh", "uname", "dev", "etc", "proc", "fd", "null", "stderr",
@@ -218,8 +251,11 @@ def read_data_points(file_path):
 
             request_vector = np.array([
                 attribute_length(raw_request),
+                number_of_letters(raw_request),
+                non_printable_characters(raw_request),
                 sql_keywords(raw_request),
                 total_length(raw_request),
+                count_html_tags(raw_request),
                 count_js_keywords(raw_request),
                 count_event_handlers(raw_request),
                 count_unix_shell_keywords(raw_request),
@@ -323,9 +359,7 @@ dataset_labels = np.concatenate((train_labels, test_labels))
 # pyplot.legend()
 # pyplot.show()
 
-
 nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-
 gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4]
 
 # Make the outliers -1
@@ -343,6 +377,5 @@ def persist_classifier(target_model):
         ("classifier", target_model)
     ])
     sklearn2pmml(pipeline, "occ_svm.pmml", with_repr=True)
-
 
 # persist_classifier()
