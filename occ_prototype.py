@@ -74,11 +74,10 @@ def sql_keywords(request_dict, split_pattern='[ +&=<>/]+'):
 
     method = request_dict.get('Method')
     if method == 'GET':
-        query_params = request_dict.get('Query').lower()
-        words = re.split(split_pattern, query_params)
+        target = request_dict.get('Query').lower()
     else:
-        body = request_dict.get('Body').lower()
-        words = re.split(split_pattern, body)
+        target = request_dict.get('Body').lower()
+    words = filter(None, re.split(split_pattern, target))
     appearances = count_appearances(words, sql2016_keywords)
     return sum(appearances.values())
 
@@ -303,9 +302,10 @@ def evaluate_occ_svm(gamma_param, nu_param):
     print('Accuracy: ', accuracy)
     # print('MCC: ', mcc)
     tp, fp, tn, fn = compute_benchmarks(y_actual=test_labels, y_predictor=label_predictor, positive_value=-1)
-    print(tp, fp, tn, fn)
+    print(f'TP = {tp}, FP={fp}, TN={tn}, FN={fn}')
     print()
     print()
+    return model
     # print('Manual precision: ', tp / (tp + fp))
     # print('Manual recall: ', tp / (tp + fn))
     # print('True positive rate:', tp / (tp + fn))
@@ -334,21 +334,31 @@ def compute_benchmarks(y_actual, y_predictor, positive_value):
     return true_positive, false_positive, true_negative, false_negative
 
 
+def persist_classifier(target_model):
+    from skl2onnx import convert_sklearn
+    from skl2onnx.common.data_types import FloatTensorType
+
+    initial_types = [('float_input', FloatTensorType([None, 4]))]
+    onnx_model = convert_sklearn(target_model, initial_types=initial_types)
+
+    with open("occ_svm.onnx", "wb") as onnx_file:
+        onnx_file.write(onnx_model.SerializeToString())
+
+
 raw_train_request_data_points, train_labels = read_data_points('data/csic2010/normalTrafficTraining.txt.csv')
+
 raw_test_normal_data_points, test_normal_labels = read_data_points('data/csic2010/normalTrafficTest.txt.csv')
-
 raw_test_anomalous_data_points, test_anomalous_labels = read_data_points('data/csic2010/anomalousTrafficTest.txt.csv')
-raw_test_request_data_points = np.concatenate((raw_test_normal_data_points, raw_test_anomalous_data_points))
 
+raw_test_request_data_points = np.concatenate((raw_test_normal_data_points, raw_test_anomalous_data_points))
 test_labels = np.concatenate((test_normal_labels, test_anomalous_labels))
 # Scale the data points
 scaler = preprocessing.StandardScaler().fit(raw_train_request_data_points)
+
 train_request_data_points = scaler.transform(raw_train_request_data_points)
-
 test_request_data_points = scaler.transform(raw_test_request_data_points)
-dataset_request_data_points = np.concatenate((train_request_data_points, test_request_data_points))
 
-dataset_labels = np.concatenate((train_labels, test_labels))
+dataset_request_data_points = np.concatenate((train_request_data_points, test_request_data_points))
 
 # counter = Counter(dataset_labels)
 # for label, _ in counter.items():
@@ -359,8 +369,11 @@ dataset_labels = np.concatenate((train_labels, test_labels))
 # pyplot.legend()
 # pyplot.show()
 
-nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4]
+dataset_labels = np.concatenate((train_labels, test_labels))
+nu_values = [0.015625]
+gamma_values = [0.25]
+# nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
+# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4]
 
 # Make the outliers -1
 test_labels[test_labels == 1] = -1
@@ -368,14 +381,22 @@ test_labels[test_labels == 0] = 1
 
 for nu in nu_values:
     for gamma in gamma_values:
-        evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
+        model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
+        persist_classifier(model)
 
 
-def persist_classifier(target_model):
-    from sklearn2pmml import sklearn2pmml, PMMLPipeline
-    pipeline = PMMLPipeline([
-        ("classifier", target_model)
-    ])
-    sklearn2pmml(pipeline, "occ_svm.pmml", with_repr=True)
 
-# persist_classifier()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
