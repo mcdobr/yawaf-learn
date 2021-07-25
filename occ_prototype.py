@@ -1,7 +1,9 @@
 # One class classification prototype for learning
 # Tutorial followed from https://machinelearningmastery.com/one-class-classification-algorithms/
+import collections
 import csv
 import re
+import urllib.parse
 
 import numpy as np
 from sklearn import preprocessing
@@ -17,7 +19,7 @@ def attribute_length(request_dict):
         return len(request_dict.get('Body'))
 
 
-def sql_keywords(request_dict, split_pattern='[ +&=<>/]+'):
+def sql_keywords(request_dict, split_pattern='\\W'):
     """Count the number of SQL keywords"""
     sql2016_keywords = {
         "abs", "acos", "all", "allocate", "alter", "and", "any", "are", "array", "array_agg", "array_max_cardinality",
@@ -107,7 +109,20 @@ def non_printable_characters(request_dict):
     return result
 
 
-def count_js_keywords(request_dict, split_pattern='[ +&=<>/]+'):
+def entropy(request_dict):
+    reconstructed_request = ''.join(list(request_dict.values()))
+    return -1 * sum(i / len(reconstructed_request) for i in collections.Counter(reconstructed_request).values())
+
+
+def url_length(request_dict):
+    return len(request_dict['Path']) + len(request_dict['Query'])
+
+
+def path_non_alpha(request_dict):
+    return sum(not c.isalpha() for c in request_dict['Path'])
+
+
+def count_js_keywords(request_dict, split_pattern='\\W'):
     javascript_keywords = {
         "abstract", "alert", "all", "anchor", "anchors", "area", "arguments", "assign", "await", "blur", "boolean",
         "break",
@@ -140,7 +155,7 @@ def count_js_keywords(request_dict, split_pattern='[ +&=<>/]+'):
     return result
 
 
-def count_event_handlers(request_dict, split_pattern='[ +&=<>/]+'):
+def count_event_handlers(request_dict, split_pattern='\\W'):
     """Count the number of HTML event handlers (e.g onclick, onmouseover etc.) in a request."""
     event_handlers = {
         "onactivate", "onafterprint", "onafterscriptexecute", "onanimationcancel", "onanimationend",
@@ -171,7 +186,7 @@ def count_event_handlers(request_dict, split_pattern='[ +&=<>/]+'):
     return result
 
 
-def count_html_tags(request_dict, split_pattern='[ +&=<>/]+'):
+def count_html_tags(request_dict, split_pattern='\\W'):
     html_tags = {
         "a", "abbr", "acronym", "address", "animate", "animatemotion", "animatetransform", "applet", "area",
         "article", "aside", "audio", "b", "base", "basefont", "bdi", "bdo", "bgsound", "big", "blink",
@@ -193,7 +208,7 @@ def count_html_tags(request_dict, split_pattern='[ +&=<>/]+'):
     return result
 
 
-def count_unix_shell_keywords(request_dict, split_pattern='[ +&=<>/]+'):
+def count_unix_shell_keywords(request_dict, split_pattern='\\W'):
     unix_keywords = {
         "bash", "cat", "csh", "dash", "du", "echo", "grep", "less", "ls", "mknod", "more", "nc", "ps",
         "rbash", "sh", "sleep", "su", "tcsh", "uname", "dev", "etc", "proc", "fd", "null", "stderr",
@@ -244,6 +259,12 @@ def read_data_points(file_path):
         reader = csv.DictReader(file)
         raw_requests = list(reader)
 
+        for raw_request in raw_requests:
+            if raw_request['Method'] == 'GET':
+                raw_request['Query'] = urllib.parse.unquote(raw_request['Query'])
+            else:
+                raw_request['Body'] = urllib.parse.unquote_plus(raw_request['Body'])
+
         data_points_list = []
         for raw_request in raw_requests:
             min_byte, max_byte, mean_byte, median_byte, unique_bytes = byte_distribution(raw_request)
@@ -252,6 +273,9 @@ def read_data_points(file_path):
                 attribute_length(raw_request),
                 number_of_letters(raw_request),
                 non_printable_characters(raw_request),
+                entropy(raw_request),
+                url_length(raw_request),
+                path_non_alpha(raw_request),
                 sql_keywords(raw_request),
                 total_length(raw_request),
                 count_html_tags(raw_request),
@@ -290,26 +314,25 @@ def evaluate_occ_svm(gamma_param, nu_param):
         average='binary',
         pos_label=-1
     )
-    # mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
+
+    mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
     accuracy = accuracy_score(y_true=test_labels, y_pred=label_predictor)
 
     print('Nu = ', nu_param)
     print('Gamma = ', gamma_param)
-    print('Classes: ', test_labels)
     print('Precision: ', precision)
     print('Recall: ', recall)
     print('F-score: ', f_score)
     print('Accuracy: ', accuracy)
-    # print('MCC: ', mcc)
+    print('MCC: ', mcc)
     tp, fp, tn, fn = compute_benchmarks(y_actual=test_labels, y_predictor=label_predictor, positive_value=-1)
     print(f'TP = {tp}, FP={fp}, TN={tn}, FN={fn}')
+    print('True positive rate:', tp / (tp + fn))
+    print('False positive rate: ', fp / (fp + tn))
+
     print()
     print()
     return model
-    # print('Manual precision: ', tp / (tp + fp))
-    # print('Manual recall: ', tp / (tp + fn))
-    # print('True positive rate:', tp / (tp + fn))
-    # print('False positive rate: ', fp / (fp + tn))
     # test_counter = Counter(test_labels)
     # predictor_counter = Counter(label_predictor)
     # print('Actual counter', test_counter)
@@ -370,10 +393,10 @@ dataset_request_data_points = np.concatenate((train_request_data_points, test_re
 # pyplot.show()
 
 dataset_labels = np.concatenate((train_labels, test_labels))
-nu_values = [0.015625]
-gamma_values = [0.25]
-# nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4]
+# nu_values = [0.015625]
+# gamma_values = [0.25]
+nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
+gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16]
 
 # Make the outliers -1
 test_labels[test_labels == 1] = -1
@@ -382,21 +405,4 @@ test_labels[test_labels == 0] = 1
 for nu in nu_values:
     for gamma in gamma_values:
         model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
-        persist_classifier(model)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        # persist_classifier(model)
