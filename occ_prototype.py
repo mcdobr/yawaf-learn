@@ -6,6 +6,7 @@ import re
 import urllib.parse
 
 import numpy as np
+from skl2onnx import to_onnx
 from sklearn import preprocessing
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score
 from sklearn.svm import OneClassSVM
@@ -357,12 +358,23 @@ def compute_benchmarks(y_actual, y_predictor, positive_value):
     return true_positive, false_positive, true_negative, false_negative
 
 
-def persist_classifier(target_model):
-    from skl2onnx import convert_sklearn
-    from skl2onnx.common.data_types import FloatTensorType
+def predict_with_onnxruntime(onnx_model, X):
+    from onnxruntime import InferenceSession
 
-    initial_types = [('float_input', FloatTensorType([None, 4]))]
-    onnx_model = convert_sklearn(target_model, initial_types=initial_types)
+    session = InferenceSession(onnx_model.SerializeToString())
+    input_name = session.get_inputs()[0].name
+    res = session.run(None, {input_name: X.astype(np.float32)})
+    return res[0]
+
+
+def persist_classifier(target_model, no_features, training_data):
+    # initial_types = [('request_scaled_numerical_features', FloatTensorType([no_features]))]
+    # onnx_model = convert_sklearn(target_model, initial_types=initial_types, target_opset=10)
+
+    onnx_model = to_onnx(model=target_model, X=training_data.astype(np.float32), target_opset=10)
+    print(onnx_model)
+    print(training_data[0])
+    print(predict_with_onnxruntime(onnx_model, training_data))
 
     with open("occ_svm.onnx", "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
@@ -383,6 +395,8 @@ test_request_data_points = scaler.transform(raw_test_request_data_points)
 
 dataset_request_data_points = np.concatenate((train_request_data_points, test_request_data_points))
 
+# print(f'Last anomalous request: {dataset_request_data_points[-1]}')
+
 # counter = Counter(dataset_labels)
 # for label, _ in counter.items():
 #     row_index_x = where(dataset_labels == label)[0]
@@ -391,12 +405,13 @@ dataset_request_data_points = np.concatenate((train_request_data_points, test_re
 #                    label=str(label))
 # pyplot.legend()
 # pyplot.show()
+number_of_features = np.shape(train_request_data_points)[1]
 
 dataset_labels = np.concatenate((train_labels, test_labels))
-# nu_values = [0.015625]
-# gamma_values = [0.25]
-nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16]
+nu_values = [0.015625]
+gamma_values = [0.25]
+# nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
+# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16]
 
 # Make the outliers -1
 test_labels[test_labels == 1] = -1
@@ -405,4 +420,4 @@ test_labels[test_labels == 0] = 1
 for nu in nu_values:
     for gamma in gamma_values:
         model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
-        # persist_classifier(model)
+        persist_classifier(model, number_of_features, train_request_data_points)
