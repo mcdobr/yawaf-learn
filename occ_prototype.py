@@ -1,15 +1,27 @@
 # One class classification prototype for learning
-# Tutorial followed from https://machinelearningmastery.com/one-class-classification-algorithms/
+# Tutorials followed:
+# One class classification https://machinelearningmastery.com/one-class-classification-algorithms/
+# Multiple models and pandas usage https://lukesingham.com/whos-going-to-leave-next/
 import collections
 import csv
 import re
 import urllib.parse
 
 import numpy as np
+import pandas as pd
 from skl2onnx import to_onnx
 from sklearn import preprocessing
-from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score
-from sklearn.svm import OneClassSVM
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
+from sklearn.metrics import confusion_matrix
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import OneClassSVM, SVC
+from sklearn.tree import DecisionTreeClassifier
+
+NORMAL_LABEL = 0
+ANOMALOUS_LABEL = 1
 
 
 def attribute_length(request_dict):
@@ -287,90 +299,26 @@ def read_data_points(file_path):
                 max_byte,
                 mean_byte,
                 median_byte,
-                unique_bytes
+                unique_bytes,
+                NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL
             ])
 
             data_points_list.append(request_vector)
 
         data_points = np.asarray(data_points_list)
-        labels = np.array([
-            0 if raw_request.get('Class') == 'Normal' else 1 for raw_request in raw_requests
-        ])
-    return data_points, labels
+        return data_points
 
 
-def evaluate_occ_svm(gamma_param, nu_param):
-    # create an outlier detection model
-    model = OneClassSVM(gamma=gamma_param, nu=nu_param)
-    # fit on overwhelming majority class (we can more easily generate legitimate traffic),
-    # 0 means inlier, 1 means outlier
-    model.fit(train_request_data_points)
-    # detect outliers in the test set
-    label_predictor = model.predict(test_request_data_points)
-
-    # Outliers are marked with -1
-    precision, recall, f_score, support = precision_recall_fscore_support(
-        y_true=test_labels,
-        y_pred=label_predictor,
-        average='binary',
-        pos_label=-1
-    )
-
-    mcc = matthews_corrcoef(y_true=test_labels, y_pred=label_predictor)
-    accuracy = accuracy_score(y_true=test_labels, y_pred=label_predictor)
-
-    print('Nu = ', nu_param)
-    print('Gamma = ', gamma_param)
-    print('Precision: ', precision)
-    print('Recall: ', recall)
-    print('F-score: ', f_score)
-    print('Accuracy: ', accuracy)
-    print('MCC: ', mcc)
-    tp, fp, tn, fn = compute_benchmarks(y_actual=test_labels, y_predictor=label_predictor, positive_value=-1)
-    print(f'TP = {tp}, FP={fp}, TN={tn}, FN={fn}')
-    print('True positive rate:', tp / (tp + fn))
-    print('False positive rate: ', fp / (fp + tn))
-
-    print()
-    print()
-    return model
-    # test_counter = Counter(test_labels)
-    # predictor_counter = Counter(label_predictor)
-    # print('Actual counter', test_counter)
-    # print('Predictor counter', predictor_counter)
-
-
-def compute_benchmarks(y_actual, y_predictor, positive_value):
-    true_positive = 0
-    false_positive = 0
-    true_negative = 0
-    false_negative = 0
-
-    for i in range(len(y_predictor)):
-        if y_predictor[i] == y_actual[i] and y_predictor[i] == positive_value:
-            true_positive += 1
-        elif y_predictor[i] == positive_value and y_predictor[i] != y_actual[i]:
-            false_positive += 1
-        elif y_predictor[i] != positive_value and y_predictor[i] == y_actual[i]:
-            true_negative += 1
-        elif y_predictor[i] != positive_value and y_predictor[i] != y_actual[i]:
-            false_negative += 1
-    return true_positive, false_positive, true_negative, false_negative
-
-
-def predict_with_onnxruntime(onnx_model, X):
+def predict_with_onnxruntime(onnx_model, x):
     from onnxruntime import InferenceSession
 
     session = InferenceSession(onnx_model.SerializeToString())
     input_name = session.get_inputs()[0].name
-    res = session.run(None, {input_name: X.astype(np.float32)})
+    res = session.run(None, {input_name: x.astype(np.float32)})
     return res[0]
 
 
-def persist_classifier(target_model, no_features, training_data):
-    # initial_types = [('request_scaled_numerical_features', FloatTensorType([no_features]))]
-    # onnx_model = convert_sklearn(target_model, initial_types=initial_types, target_opset=10)
-
+def persist_classifier(target_model, training_data):
     onnx_model = to_onnx(model=target_model, X=training_data.astype(np.float32), target_opset=10)
     print(onnx_model)
     print(training_data[0])
@@ -380,44 +328,200 @@ def persist_classifier(target_model, no_features, training_data):
         onnx_file.write(onnx_model.SerializeToString())
 
 
-raw_train_request_data_points, train_labels = read_data_points('data/csic2010/normalTrafficTraining.txt.csv')
+def load_data():
+    data_points = np.concatenate(
+        (
+            read_data_points('data/csic2010/normalTrafficTraining.txt.csv'),
+            read_data_points('data/csic2010/normalTrafficTest.txt.csv'),
+            read_data_points('data/csic2010/anomalousTrafficTest.txt.csv'),
+        )
+    )
+    dataframe = pd.DataFrame({
+        'Attribute length': data_points[:, 0],
+        'Number of letters': data_points[:, 1],
+        'Non printable characters': data_points[:, 2],
+        'Entropy': data_points[:, 3],
+        'URL length': data_points[:, 4],
+        'Non alphabetical chars in path': data_points[:, 5],
+        'SQL keywords': data_points[:, 6],
+        'Total length': data_points[:, 7],
+        'Number of HTML tags': data_points[:, 8],
+        'JavaScript keywords': data_points[:, 9],
+        'JavaScript event handlers': data_points[:, 10],
+        'Unix shell keywords': data_points[:, 11],
+        'Minimum byte': data_points[:, 12],
+        'Maximum byte': data_points[:, 13],
+        'Mean byte': data_points[:, 14],
+        'Median byte': data_points[:, 15],
+        'Unique bytes': data_points[:, 16],
+        'Label': data_points[:, 17],
+    })
+    return dataframe
 
-raw_test_normal_data_points, test_normal_labels = read_data_points('data/csic2010/normalTrafficTest.txt.csv')
-raw_test_anomalous_data_points, test_anomalous_labels = read_data_points('data/csic2010/anomalousTrafficTest.txt.csv')
 
-raw_test_request_data_points = np.concatenate((raw_test_normal_data_points, raw_test_anomalous_data_points))
-test_labels = np.concatenate((test_normal_labels, test_anomalous_labels))
-# Scale the data points
-scaler = preprocessing.StandardScaler().fit(raw_train_request_data_points)
+def compute_indicators(y_true, y_pred):
+    accuracy = accuracy_score(y_true=y_true, y_pred=y_pred)
+    # roc_auc = roc_auc_score(y_true=y_test, y_score=y_test_pred_probabilities[1])
+    precision, recall, f_score, support = precision_recall_fscore_support(
+        y_true=y_true,
+        y_pred=y_pred,
+        average='binary',
+        pos_label=ANOMALOUS_LABEL
+    )
+    mcc = matthews_corrcoef(y_true=y_true, y_pred=y_pred)
+    tn, fp, fn, tp = confusion_matrix(y_true=y_true, y_pred=y_pred).ravel()
+    return [accuracy, precision, recall, f_score, mcc, tn, fp, fn, tp]
 
-train_request_data_points = scaler.transform(raw_train_request_data_points)
-test_request_data_points = scaler.transform(raw_test_request_data_points)
 
-dataset_request_data_points = np.concatenate((train_request_data_points, test_request_data_points))
+def logistic_regression(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    logistic_model = LogisticRegression()
+    logistic_model.fit(x_train, y_train)
 
-# print(f'Last anomalous request: {dataset_request_data_points[-1]}')
+    y_train_pred = logistic_model.predict(x_train)
+    train_accuracy = accuracy_score(y_true=y_train, y_pred=y_train_pred)
 
-# counter = Counter(dataset_labels)
-# for label, _ in counter.items():
-#     row_index_x = where(dataset_labels == label)[0]
-#     pyplot.scatter(dataset_request_data_points[row_index_x, 0],
-#                    dataset_request_data_points[row_index_x, 1],
-#                    label=str(label))
-# pyplot.legend()
-# pyplot.show()
-number_of_features = np.shape(train_request_data_points)[1]
+    y_test_pred = pd.DataFrame(logistic_model.predict(x_test))
 
-dataset_labels = np.concatenate((train_labels, test_labels))
-nu_values = [0.015625]
-gamma_values = [0.25]
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def decision_tree(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    decision_tree = DecisionTreeClassifier(max_depth=3)
+    decision_tree.fit(x_train, y_train)
+
+    y_test_pred = pd.DataFrame(decision_tree.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def random_forest(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    random_forest = RandomForestClassifier()
+    random_forest.fit(x_train, y_train)
+
+    y_test_pred = pd.DataFrame(random_forest.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def knn(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    knn = KNeighborsClassifier(n_neighbors=4)
+    knn.fit(x_train, y_train)
+
+    y_test_pred = pd.DataFrame(knn.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def naive_bayes(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    bayes = GaussianNB()
+    bayes.fit(x_train, y_train)
+
+    y_test_pred = pd.DataFrame(bayes.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def svm(x_train, y_train, x_test, y_test, x_validate, y_validate):
+    svm_model = SVC(C=1, probability=True)
+    svm_model.fit(x_train, y_train)
+
+    # train_accuracy = accuracy_score
+
+    y_test_pred = pd.DataFrame(svm_model.predict(x_test))
+    y_test_pred_probabilities = pd.DataFrame(svm_model.predict_proba(x_test))
+
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+df = load_data()
+
+train, test, validate = np.split(df.sample(frac=1), [int(0.30 * len(df)), int(0.8 * len(df))])
+print(train.shape, test.shape, validate.shape)
+
+y_train = train['Label']
+x_train = train.drop(['Label'], axis=1)
+y_test = test['Label']
+x_test = test.drop(['Label'], axis=1)
+y_validate = validate['Label']
+x_validate = validate.drop(['Label'], axis=1)
+
+# Scale the values based on the training data
+scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
+x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
+x_test[x_train.columns] = scaler.transform(x_test[x_train.columns])
+x_validate[x_train.columns] = scaler.transform(x_validate[x_train.columns])
+
+logistic_regression_indicators = logistic_regression(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'Logistic regression: {logistic_regression_indicators}')
+
+decision_tree_performance_indicators = decision_tree(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'Decision tree: {decision_tree_performance_indicators}')
+
+random_forest_performance_indicators = random_forest(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'Random forest: {random_forest_performance_indicators}')
+
+knn_performance_indicators = knn(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'kNN: {knn_performance_indicators}')
+
+bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'Naive Bayes: {bayes_performance_indicators}')
+
+svm_performance_indicators = svm(x_train, y_train, x_test, y_test, x_validate, y_validate)
+print(f'SVM: {svm_performance_indicators}')
+
+# dataset_labels = np.data_points((train_labels, test_labels))
+# nu_values = [0.015625]
+# gamma_values = [0.25]
 # nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16]
+# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16, 64, 128]
 
 # Make the outliers -1
-test_labels[test_labels == 1] = -1
-test_labels[test_labels == 0] = 1
+# train_labels[train_labels == 1] = -1
+# train_labels[train_labels == 0] = 1
 
-for nu in nu_values:
-    for gamma in gamma_values:
-        model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
-        persist_classifier(model, number_of_features, train_request_data_points)
+# test_labels[test_labels == 1] = -1
+# test_labels[test_labels == 0] = 1
+
+# for nu in nu_values:
+#     for gamma in gamma_values:
+#         model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
+#         model = evaluate_svm()
+# persist_classifier(model, number_of_features, train_request_data_points)
+
+
+# def evaluate_occ_svm(gamma_param, nu_param):
+#     # create an outlier detection model
+#     model = OneClassSVM(gamma=gamma_param, nu=nu_param)
+#     # fit on overwhelming majority class (we can more easily generate legitimate traffic),
+#     # 0 means inlier, 1 means outlier
+#     model.fit(train_request_data_points)
+#
+#     # evaluate on the training dataset
+#     train_labels_predictor = model.predict(train_request_data_points)
+#     train_accuracy = accuracy_score(y_true=train_labels, y_pred=train_labels_predictor)
+#
+#     # detect outliers in the test set
+#     test_labels_predictor = model.predict(test_request_data_points)
+#
+#     # Outliers are marked with -1
+#     precision, recall, f_score, support = precision_recall_fscore_support(
+#         y_true=test_labels,
+#         y_pred=test_labels_predictor,
+#         average='binary',
+#         pos_label=ANOMALOUS_LABEL
+#     )
+#
+#     mcc = matthews_corrcoef(y_true=test_labels, y_pred=test_labels_predictor)
+#     test_accuracy = accuracy_score(y_true=test_labels, y_pred=test_labels_predictor)
+#
+#     print('Nu = ', nu_param)
+#     print('Gamma = ', gamma_param)
+#     print('Precision: ', precision)
+#     print('Recall: ', recall)
+#     print('F-score: ', f_score)
+#     print('Support: ', support)
+#
+#     print('Train Accuracy ', train_accuracy)
+#     print('Test Accuracy: ', test_accuracy)
+#     print('MCC: ', mcc)
+#     tn, fp, fn, tp = confusion_matrix(y_true=y_true, y_pred=y_pred).ravel()
+#     print(f'TP = {tp}, FP={fp}, TN={tn}, FN={fn}')
+#     print('True positive rate:', tp / (tp + fn))
+#     print('False positive rate: ', fp / (fp + tn))
+#     return model
