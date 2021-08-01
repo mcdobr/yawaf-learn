@@ -376,7 +376,7 @@ def compute_indicators(y_true, y_pred):
 
 
 def logistic_regression(x_train, y_train, x_test, y_test):
-    logistic_model = LogisticRegression()
+    logistic_model = LogisticRegression(n_jobs=-1)
     logistic_model.fit(x_train, y_train)
 
     y_train_pred = logistic_model.predict(x_train)
@@ -396,7 +396,7 @@ def decision_tree(x_train, y_train, x_test, y_test):
 
 
 def random_forest(x_train, y_train, x_test, y_test):
-    random_forest = RandomForestClassifier()
+    random_forest = RandomForestClassifier(n_jobs=-1)
     random_forest.fit(x_train, y_train)
 
     y_test_pred = pd.DataFrame(random_forest.predict(x_test))
@@ -404,7 +404,7 @@ def random_forest(x_train, y_train, x_test, y_test):
 
 
 def knn(x_train, y_train, x_test, y_test):
-    knn = KNeighborsClassifier(n_neighbors=4)
+    knn = KNeighborsClassifier(n_neighbors=4, n_jobs=-1)
     knn.fit(x_train, y_train)
 
     y_test_pred = pd.DataFrame(knn.predict(x_test))
