@@ -375,7 +375,7 @@ def compute_indicators(y_true, y_pred):
     return [accuracy, precision, recall, f_score, mcc, tn, fp, fn, tp]
 
 
-def logistic_regression(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression()
     logistic_model.fit(x_train, y_train)
 
@@ -387,7 +387,7 @@ def logistic_regression(x_train, y_train, x_test, y_test, x_validate, y_validate
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
-def decision_tree(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def decision_tree(x_train, y_train, x_test, y_test):
     decision_tree = DecisionTreeClassifier(max_depth=3)
     decision_tree.fit(x_train, y_train)
 
@@ -395,7 +395,7 @@ def decision_tree(x_train, y_train, x_test, y_test, x_validate, y_validate):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
-def random_forest(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def random_forest(x_train, y_train, x_test, y_test):
     random_forest = RandomForestClassifier()
     random_forest.fit(x_train, y_train)
 
@@ -403,7 +403,7 @@ def random_forest(x_train, y_train, x_test, y_test, x_validate, y_validate):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
-def knn(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def knn(x_train, y_train, x_test, y_test):
     knn = KNeighborsClassifier(n_neighbors=4)
     knn.fit(x_train, y_train)
 
@@ -411,7 +411,7 @@ def knn(x_train, y_train, x_test, y_test, x_validate, y_validate):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
-def naive_bayes(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def naive_bayes(x_train, y_train, x_test, y_test):
     bayes = GaussianNB()
     bayes.fit(x_train, y_train)
 
@@ -419,7 +419,7 @@ def naive_bayes(x_train, y_train, x_test, y_test, x_validate, y_validate):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
-def svm(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def svm(x_train, y_train, x_test, y_test):
     svm_model = SVC(C=1, probability=True)
     svm_model.fit(x_train, y_train)
 
@@ -441,12 +441,12 @@ def plot_histograms(df):
     pyplot.show()
 
 
-def pca(x_train, y_train, x_test, y_test, x_validate, y_validate):
+def pca(x_train, y_train, x_test, y_test):
     """This uses the whole data just for plotting currently. If I want to do dimension reduction i should train PCA
     on the training data, and use that fitted PCA on the test data to avoid introducing bias.
     """
-    scaled_points = pd.concat([x_train, x_test, x_validate])
-    targets = pd.concat([y_train, y_test, y_validate])
+    scaled_points = pd.concat([x_train, x_test])
+    targets = pd.concat([y_train, y_test])
     pca_transform = PCA(n_components=2)
     transformed_points = pca_transform.fit_transform(scaled_points)
 
@@ -461,43 +461,38 @@ def pca(x_train, y_train, x_test, y_test, x_validate, y_validate):
 df = load_data()
 
 # plot_histograms(df)
-train, test, validate = np.split(df.sample(frac=1), [int(0.30 * len(df)), int(0.8 * len(df))])
+train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
 
-print(train.shape, test.shape, validate.shape)
+print(train.shape, test.shape)
 y_train = train['Label']
 x_train = train.drop(['Label'], axis=1)
 y_test = test['Label']
 x_test = test.drop(['Label'], axis=1)
-y_validate = validate['Label']
-
-x_validate = validate.drop(['Label'], axis=1)
 # Scale the values based on the training data
 scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
 x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
-x_test[x_train.columns] = scaler.transform(x_test[x_train.columns])
+x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
 
-x_validate[x_train.columns] = scaler.transform(x_validate[x_train.columns])
+
 # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
+pca(x_train, y_train, x_test, y_test)
 
-
-pca(x_train, y_train, x_test, y_test, x_validate, y_validate)
-
-logistic_regression_indicators = logistic_regression(x_train, y_train, x_test, y_test, x_validate, y_validate)
+logistic_regression_indicators = logistic_regression(x_train, y_train, x_test, y_test)
 print(f'Logistic regression: {logistic_regression_indicators}')
 
-decision_tree_performance_indicators = decision_tree(x_train, y_train, x_test, y_test, x_validate, y_validate)
+decision_tree_performance_indicators = decision_tree(x_train, y_train, x_test, y_test)
 print(f'Decision tree: {decision_tree_performance_indicators}')
 
-random_forest_performance_indicators = random_forest(x_train, y_train, x_test, y_test, x_validate, y_validate)
+random_forest_performance_indicators = random_forest(x_train, y_train, x_test, y_test)
 print(f'Random forest: {random_forest_performance_indicators}')
 
-knn_performance_indicators = knn(x_train, y_train, x_test, y_test, x_validate, y_validate)
+knn_performance_indicators = knn(x_train, y_train, x_test, y_test)
 print(f'kNN: {knn_performance_indicators}')
 
-bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test, x_validate, y_validate)
+bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
 print(f'Naive Bayes: {bayes_performance_indicators}')
 
-svm_performance_indicators = svm(x_train, y_train, x_test, y_test, x_validate, y_validate)
+svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
 print(f'SVM: {svm_performance_indicators}')
 
 # dataset_labels = np.data_points((train_labels, test_labels))
