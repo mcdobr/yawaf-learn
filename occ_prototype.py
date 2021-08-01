@@ -4,6 +4,7 @@
 # Multiple models and pandas usage https://lukesingham.com/whos-going-to-leave-next/
 import collections
 import csv
+import datetime
 import re
 import urllib.parse
 
@@ -489,11 +490,27 @@ print(f'Random forest: {random_forest_performance_indicators}')
 knn_performance_indicators = knn(x_train, y_train, x_test, y_test)
 print(f'kNN: {knn_performance_indicators}')
 
-bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
-print(f'Naive Bayes: {bayes_performance_indicators}')
+# svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
+# print(f'SVM: {svm_performance_indicators}')
+#
+# bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
+# print(f'Naive Bayes: {bayes_performance_indicators}')
 
-svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
-print(f'SVM: {svm_performance_indicators}')
+
+metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
+metrics_df = pd.DataFrame(
+    np.array(
+        [
+            logistic_regression_indicators,
+            decision_tree_performance_indicators,
+            random_forest_performance_indicators,
+            knn_performance_indicators,
+            # svm_performance_indicators,
+            # bayes_performance_indicators,
+        ]
+    ), columns=metrics_headers)
+
+to_csv = metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
 
 # dataset_labels = np.data_points((train_labels, test_labels))
 # nu_values = [0.015625]
