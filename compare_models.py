@@ -324,14 +324,14 @@ def predict_with_onnxruntime(onnx_model, x):
     return res[0]
 
 
-def persist_classifier(target_model, training_data):
-    onnx_model = to_onnx(model=target_model, X=training_data.astype(np.float32), target_opset=10)
-    print(onnx_model)
-    print(training_data[0])
-    print(predict_with_onnxruntime(onnx_model, training_data))
-
-    with open("occ_svm.onnx", "wb") as onnx_file:
+def persist_classifier(name, target_model, input_data):
+    """This persists the model after being fitted with the whole dataset, to allow deployment to production"""
+    onnx_model = to_onnx(model=target_model, X=input_data.astype(np.float32), target_opset=10)
+    with open(f'{name}.onnx', "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
+    # print(onnx_model)
+    # print(training_data[0])
+    # print(predict_with_onnxruntime(onnx_model, training_data))
 
 
 def load_data():
@@ -429,7 +429,7 @@ def knn(x_train, y_train, x_test, y_test):
     knn_model = KNeighborsClassifier(n_jobs=-1)
     knn_model.fit(x_train, y_train)
 
-    parameter_grid = dict(n_neighbors=[1, 2, 4], weights=['uniform', 'distance'])
+    parameter_grid = dict(n_neighbors=[1, 2], weights=['uniform', 'distance'])
     grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -543,67 +543,21 @@ def main():
 
     to_csv = metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
 
+    x_dataset = pd.concat([x_train, x_test])
+    y_dataset = pd.concat([y_train, y_test])
+
+    final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("logistic_regression", final_logistic_regression, x_dataset)
+
+    final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset)
+
+    final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("random_forest", final_random_forest_classifier, x_dataset)
+
+    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("decision_tree", final_knn_classifier, x_dataset)
+
 
 if __name__ == "__main__":
     main()
-
-# dataset_labels = np.data_points((train_labels, test_labels))
-# nu_values = [0.015625]
-# gamma_values = [0.25]
-# nu_values = [0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1]
-# gamma_values = [2 ** -14, 2 ** -12, 2 ** -10, 2 ** -8, 2 ** -6, 2 ** -4, 0.25, 1, 4, 16, 64, 128]
-
-# Make the outliers -1
-# train_labels[train_labels == 1] = -1
-# train_labels[train_labels == 0] = 1
-
-# test_labels[test_labels == 1] = -1
-# test_labels[test_labels == 0] = 1
-
-# for nu in nu_values:
-#     for gamma in gamma_values:
-#         model = evaluate_occ_svm(gamma_param=gamma, nu_param=nu)
-#         model = evaluate_svm()
-# persist_classifier(model, number_of_features, train_request_data_points)
-
-
-# def evaluate_occ_svm(gamma_param, nu_param):
-#     # create an outlier detection model
-#     model = OneClassSVM(gamma=gamma_param, nu=nu_param)
-#     # fit on overwhelming majority class (we can more easily generate legitimate traffic),
-#     # 0 means inlier, 1 means outlier
-#     model.fit(train_request_data_points)
-#
-#     # evaluate on the training dataset
-#     train_labels_predictor = model.predict(train_request_data_points)
-#     train_accuracy = accuracy_score(y_true=train_labels, y_pred=train_labels_predictor)
-#
-#     # detect outliers in the test set
-#     test_labels_predictor = model.predict(test_request_data_points)
-#
-#     # Outliers are marked with -1
-#     precision, recall, f_score, support = precision_recall_fscore_support(
-#         y_true=test_labels,
-#         y_pred=test_labels_predictor,
-#         average='binary',
-#         pos_label=ANOMALOUS_LABEL
-#     )
-#
-#     mcc = matthews_corrcoef(y_true=test_labels, y_pred=test_labels_predictor)
-#     test_accuracy = accuracy_score(y_true=test_labels, y_pred=test_labels_predictor)
-#
-#     print('Nu = ', nu_param)
-#     print('Gamma = ', gamma_param)
-#     print('Precision: ', precision)
-#     print('Recall: ', recall)
-#     print('F-score: ', f_score)
-#     print('Support: ', support)
-#
-#     print('Train Accuracy ', train_accuracy)
-#     print('Test Accuracy: ', test_accuracy)
-#     print('MCC: ', mcc)
-#     tn, fp, fn, tp = confusion_matrix(y_true=y_true, y_pred=y_pred).ravel()
-#     print(f'TP = {tp}, FP={fp}, TN={tn}, FN={fn}')
-#     print('True positive rate:', tp / (tp + fn))
-#     print('False positive rate: ', fp / (fp + tn))
-#     return model
