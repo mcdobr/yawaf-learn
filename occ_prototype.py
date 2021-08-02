@@ -2,6 +2,8 @@
 # Tutorials followed:
 # One class classification https://machinelearningmastery.com/one-class-classification-algorithms/
 # Multiple models and pandas usage https://lukesingham.com/whos-going-to-leave-next/
+# Examples of tuning parameters
+# https://machinelearningmastery.com/hyperparameters-for-classification-machine-learning-algorithms/
 import collections
 import csv
 import datetime
@@ -18,6 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import OneClassSVM, SVC
@@ -362,6 +365,20 @@ def load_data():
     return dataframe
 
 
+def grid_search_best_parameters(parameter_grid, estimator_model, x, y):
+    cross_validator = RepeatedStratifiedKFold(n_splits=10, n_repeats=3)
+    grid_search = GridSearchCV(
+        estimator=estimator_model,
+        param_grid=parameter_grid,
+        n_jobs=-1,
+        cv=cross_validator,
+        scoring='accuracy',
+        refit=True
+    )
+    grid_search.fit(x, y)
+    return grid_search
+
+
 def compute_indicators(y_true, y_pred):
     accuracy = accuracy_score(y_true=y_true, y_pred=y_pred)
     # roc_auc = roc_auc_score(y_true=y_test, y_score=y_test_pred_probabilities[1])
@@ -378,38 +395,45 @@ def compute_indicators(y_true, y_pred):
 
 def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression(n_jobs=-1)
-    logistic_model.fit(x_train, y_train)
 
-    y_train_pred = logistic_model.predict(x_train)
-    train_accuracy = accuracy_score(y_true=y_train, y_pred=y_train_pred)
+    # Grid search for best parameters
+    parameter_grid = dict(penalty=['l2'], C=[1000, 100, 10, 1.0, 0.1, 0.01, 0.001])
+    grid_search = grid_search_best_parameters(parameter_grid, logistic_model, x_train, y_train)
 
-    y_test_pred = pd.DataFrame(logistic_model.predict(x_test))
-
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def decision_tree(x_train, y_train, x_test, y_test):
-    decision_tree = DecisionTreeClassifier(max_depth=3)
-    decision_tree.fit(x_train, y_train)
+    decision_tree_model = DecisionTreeClassifier(max_depth=3)
+    decision_tree_model.fit(x_train, y_train)
 
-    y_test_pred = pd.DataFrame(decision_tree.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    parameter_grid = dict(max_depth=[None, 3], max_features=['sqrt', 'log2'])
+    grid_search = grid_search_best_parameters(parameter_grid, decision_tree_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def random_forest(x_train, y_train, x_test, y_test):
-    random_forest = RandomForestClassifier(n_jobs=-1)
-    random_forest.fit(x_train, y_train)
+    random_forest_model = RandomForestClassifier(n_jobs=-1)
 
-    y_test_pred = pd.DataFrame(random_forest.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    parameter_grid = dict(n_estimators=[10, 100], max_features=['sqrt', 'log2'])
+    grid_search = grid_search_best_parameters(parameter_grid, random_forest_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def knn(x_train, y_train, x_test, y_test):
-    knn = KNeighborsClassifier(n_neighbors=4, n_jobs=-1)
-    knn.fit(x_train, y_train)
+    knn_model = KNeighborsClassifier(n_jobs=-1)
+    knn_model.fit(x_train, y_train)
 
-    y_test_pred = pd.DataFrame(knn.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    parameter_grid = dict(n_neighbors=[1, 2, 4], weights=['uniform', 'distance'])
+    grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def naive_bayes(x_train, y_train, x_test, y_test):
@@ -459,58 +483,69 @@ def pca(x_train, y_train, x_test, y_test):
     pyplot.show()
 
 
-df = load_data()
+def main():
+    df = load_data()
 
-# plot_histograms(df)
-train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
+    # plot_histograms(df)
+    train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
 
-print(train.shape, test.shape)
-y_train = train['Label']
-x_train = train.drop(['Label'], axis=1)
-y_test = test['Label']
-x_test = test.drop(['Label'], axis=1)
-# Scale the values based on the training data
-scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
-x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
-x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
+    print(train.shape, test.shape)
+    y_train = train['Label']
+    x_train = train.drop(['Label'], axis=1)
+    y_test = test['Label']
+    x_test = test.drop(['Label'], axis=1)
+    # Scale the values based on the training data
+    scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
+    x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
+    x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
+
+    # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
+    # pca(x_train, y_train, x_test, y_test)
+
+    best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
+    print(f'Logistic regression: {best_logistic_regression_indicators}')
+    print("Best params: ", logistic_grid_results.best_params_)
+    print()
+
+    decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
+    print(f'Decision tree: {decision_tree_performance_indicators}')
+    print("Best params: ", decision_tree_grid_results.best_params_)
+    print()
+
+    random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
+    print(f'Random forest: {random_forest_performance_indicators}')
+    print("Best params: ", random_forest_grid_results.best_params_)
+    print()
+
+    knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
+    print(f'kNN: {knn_performance_indicators}')
+    print("Best params: ", knn_grid_results.best_params_)
+    print()
+
+    # svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
+    # print(f'SVM: {svm_performance_indicators}')
+    #
+    # bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
+    # print(f'Naive Bayes: {bayes_performance_indicators}')
+
+    metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
+    metrics_df = pd.DataFrame(
+        np.array(
+            [
+                best_logistic_regression_indicators,
+                decision_tree_performance_indicators,
+                random_forest_performance_indicators,
+                knn_performance_indicators,
+                # svm_performance_indicators,
+                # bayes_performance_indicators,
+            ]
+        ), columns=metrics_headers)
+
+    to_csv = metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
 
 
-# Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
-pca(x_train, y_train, x_test, y_test)
-
-logistic_regression_indicators = logistic_regression(x_train, y_train, x_test, y_test)
-print(f'Logistic regression: {logistic_regression_indicators}')
-
-decision_tree_performance_indicators = decision_tree(x_train, y_train, x_test, y_test)
-print(f'Decision tree: {decision_tree_performance_indicators}')
-
-random_forest_performance_indicators = random_forest(x_train, y_train, x_test, y_test)
-print(f'Random forest: {random_forest_performance_indicators}')
-
-knn_performance_indicators = knn(x_train, y_train, x_test, y_test)
-print(f'kNN: {knn_performance_indicators}')
-
-# svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
-# print(f'SVM: {svm_performance_indicators}')
-#
-# bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
-# print(f'Naive Bayes: {bayes_performance_indicators}')
-
-
-metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
-metrics_df = pd.DataFrame(
-    np.array(
-        [
-            logistic_regression_indicators,
-            decision_tree_performance_indicators,
-            random_forest_performance_indicators,
-            knn_performance_indicators,
-            # svm_performance_indicators,
-            # bayes_performance_indicators,
-        ]
-    ), columns=metrics_headers)
-
-to_csv = metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
+if __name__ == "__main__":
+    main()
 
 # dataset_labels = np.data_points((train_labels, test_labels))
 # nu_values = [0.015625]
