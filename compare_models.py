@@ -431,7 +431,7 @@ def knn(x_train, y_train, x_test, y_test):
     knn_model = KNeighborsClassifier(n_jobs=-1)
     knn_model.fit(x_train, y_train)
 
-    parameter_grid = dict(n_neighbors=[1, 2], weights=['uniform', 'distance'])
+    parameter_grid = dict(n_neighbors=[1, 2, 3], weights=['uniform', 'distance'])
     grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -450,8 +450,6 @@ def svm(x_train, y_train, x_test, y_test):
     svm_model = SVC(C=1, probability=True)
     svm_model.fit(x_train, y_train)
 
-    # train_accuracy = accuracy_score
-
     y_test_pred = pd.DataFrame(svm_model.predict(x_test))
     y_test_pred_probabilities = pd.DataFrame(svm_model.predict_proba(x_test))
 
@@ -459,7 +457,15 @@ def svm(x_train, y_train, x_test, y_test):
 
 
 def mlp(x_train, y_train, x_test, y_test):
-    pass
+    from sklearn.neural_network import MLPClassifier
+    mlp_model = MLPClassifier()
+    # mlp_model.fit(x_train, y_train)
+
+    parameter_grid = dict(max_iter=[400, 500])
+    grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def dummy_baseline(x_train, y_train, x_test, y_test):
@@ -547,6 +553,11 @@ def main():
     # bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
     # print(f'Naive Bayes: {bayes_performance_indicators}')
 
+    mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
+    print(f'MLP: {mlp_performance_indicators}')
+    print("Best params: ", mlp_grid_results.best_params_)
+    print()
+
     metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
@@ -555,6 +566,7 @@ def main():
                 decision_tree_performance_indicators,
                 random_forest_performance_indicators,
                 knn_performance_indicators,
+                mlp_performance_indicators,
                 # svm_performance_indicators,
                 # bayes_performance_indicators,
             ]
