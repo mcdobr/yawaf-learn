@@ -16,6 +16,7 @@ from matplotlib import pyplot
 from skl2onnx import to_onnx
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
@@ -326,7 +327,7 @@ def predict_with_onnxruntime(onnx_model, x):
 
 def persist_classifier(name, target_model, input_data):
     """This persists the model after being fitted with the whole dataset, to allow deployment to production"""
-    onnx_model = to_onnx(model=target_model, X=input_data.astype(np.float32), target_opset=10)
+    onnx_model = to_onnx(model=target_model, X=input_data.to_numpy().astype(np.float32), target_opset=10)
     with open(f'{name}.onnx', "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
     # print(onnx_model)
@@ -397,7 +398,8 @@ def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression(n_jobs=-1)
 
     # Grid search for best parameters
-    parameter_grid = dict(penalty=['l2'], C=[1000, 100, 10, 1.0, 0.1, 0.01, 0.001])
+    c_values = [1000, 100, 10, 1.0, 0.1, 0.01, 0.001]
+    parameter_grid = dict(penalty=['l2'], C=c_values, solver=['lbfgs']),
     grid_search = grid_search_best_parameters(parameter_grid, logistic_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -456,6 +458,19 @@ def svm(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
+def mlp(x_train, y_train, x_test, y_test):
+    pass
+
+
+def dummy_baseline(x_train, y_train, x_test, y_test):
+    dummy = DummyClassifier(strategy="prior")
+    dummy.fit(x_train, y_train)
+
+    y_test_pred = pd.DataFrame(dummy.predict(x_test))
+
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
 def plot_histograms(df):
     for index, column in enumerate(df):
         if column == "Label":
@@ -501,6 +516,10 @@ def main():
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
+
+    baseline_results = dummy_baseline(x_train, y_train, x_test, y_test)
+    print(f'Baseline results: {baseline_results}')
+    print()
 
     best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
     print(f'Logistic regression: {best_logistic_regression_indicators}')
@@ -556,7 +575,7 @@ def main():
     persist_classifier("random_forest", final_random_forest_classifier, x_dataset)
 
     final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("decision_tree", final_knn_classifier, x_dataset)
+    persist_classifier("knn", final_knn_classifier, x_dataset)
 
 
 if __name__ == "__main__":
