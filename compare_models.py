@@ -407,7 +407,7 @@ def logistic_regression(x_train, y_train, x_test, y_test):
 
 
 def decision_tree(x_train, y_train, x_test, y_test):
-    decision_tree_model = DecisionTreeClassifier(max_depth=3)
+    decision_tree_model = DecisionTreeClassifier()
     decision_tree_model.fit(x_train, y_train)
 
     parameter_grid = dict(max_depth=[None, 3], max_features=['sqrt', 'log2'])
