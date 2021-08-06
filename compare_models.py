@@ -399,7 +399,7 @@ def logistic_regression(x_train, y_train, x_test, y_test):
 
     # Grid search for best parameters
     c_values = [1000, 100, 10, 1.0, 0.1, 0.01, 0.001]
-    parameter_grid = dict(penalty=['l2'], C=c_values, solver=['lbfgs']),
+    parameter_grid = dict(penalty=['l2'], C=c_values, solver=['lbfgs'], max_iter=[100, 1000]),
     grid_search = grid_search_best_parameters(parameter_grid, logistic_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -410,7 +410,7 @@ def decision_tree(x_train, y_train, x_test, y_test):
     decision_tree_model = DecisionTreeClassifier()
     decision_tree_model.fit(x_train, y_train)
 
-    parameter_grid = dict(max_depth=[None, 3], max_features=['sqrt', 'log2'])
+    parameter_grid = dict(max_depth=[None, 3], max_features=['sqrt', 'log2', None])
     grid_search = grid_search_best_parameters(parameter_grid, decision_tree_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -420,7 +420,7 @@ def decision_tree(x_train, y_train, x_test, y_test):
 def random_forest(x_train, y_train, x_test, y_test):
     random_forest_model = RandomForestClassifier(n_jobs=-1)
 
-    parameter_grid = dict(n_estimators=[10, 100], max_features=['sqrt', 'log2'])
+    parameter_grid = dict(n_estimators=[10, 100], max_features=['sqrt', 'log2', None])
     grid_search = grid_search_best_parameters(parameter_grid, random_forest_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -438,34 +438,35 @@ def knn(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
-def naive_bayes(x_train, y_train, x_test, y_test):
-    bayes = GaussianNB()
-    bayes.fit(x_train, y_train)
-
-    y_test_pred = pd.DataFrame(bayes.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
-
-
-def svm(x_train, y_train, x_test, y_test):
-    svm_model = SVC(C=1, probability=True)
-    svm_model.fit(x_train, y_train)
-
-    y_test_pred = pd.DataFrame(svm_model.predict(x_test))
-    y_test_pred_probabilities = pd.DataFrame(svm_model.predict_proba(x_test))
-
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
-
-
 def mlp(x_train, y_train, x_test, y_test):
     from sklearn.neural_network import MLPClassifier
     mlp_model = MLPClassifier()
-    # mlp_model.fit(x_train, y_train)
 
-    parameter_grid = dict(max_iter=[400, 500])
+    parameter_grid = dict(activation=['relu'], max_iter=[100])
     grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
+
+
+def naive_bayes(x_train, y_train, x_test, y_test):
+    bayes = GaussianNB()
+
+    parameter_grid = dict()
+    grid_search = grid_search_best_parameters(parameter_grid, bayes, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+
+
+def svm(x_train, y_train, x_test, y_test):
+    svm_model = SVC()
+
+    parameter_grid = dict(kernel=['rbf', 'linear'], C=[0.0001, 0.001, 0.01], probability=[False])
+    grid_search = grid_search_best_parameters(parameter_grid, svm_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
 
 
 def dummy_baseline(x_train, y_train, x_test, y_test):
@@ -474,7 +475,7 @@ def dummy_baseline(x_train, y_train, x_test, y_test):
 
     y_test_pred = pd.DataFrame(dummy.predict(x_test))
 
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), dummy
 
 
 def plot_histograms(df):
@@ -547,15 +548,17 @@ def main():
     print("Best params: ", knn_grid_results.best_params_)
     print()
 
-    # svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
-    # print(f'SVM: {svm_performance_indicators}')
-    #
-    # bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
-    # print(f'Naive Bayes: {bayes_performance_indicators}')
-
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
+    print()
+
+    bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
+    print(f'Naive Bayes: {bayes_performance_indicators}')
+    print()
+
+    svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
+    print(f'SVM: {svm_performance_indicators}')
     print()
 
     metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
@@ -567,8 +570,8 @@ def main():
                 random_forest_performance_indicators,
                 knn_performance_indicators,
                 mlp_performance_indicators,
-                # svm_performance_indicators,
-                # bayes_performance_indicators,
+                bayes_performance_indicators,
+                svm_performance_indicators,
             ]
         ), columns=metrics_headers)
 
@@ -588,6 +591,9 @@ def main():
 
     final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
     persist_classifier("knn", final_knn_classifier, x_dataset)
+
+    final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("mlp", final_mlp_classifier, x_dataset)
 
 
 if __name__ == "__main__":
