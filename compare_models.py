@@ -327,7 +327,16 @@ def predict_with_onnxruntime(onnx_model, x):
 
 def persist_classifier(name, target_model, input_data):
     """This persists the model after being fitted with the whole dataset, to allow deployment to production"""
-    onnx_model = to_onnx(model=target_model, X=input_data.to_numpy().astype(np.float32), target_opset=10)
+
+    # ZipMap not supported by tract so this would enable at least a few models to be used
+    options = {id(target_model): {'zipmap': False}}
+
+    onnx_model = to_onnx(
+        model=target_model,
+        X=input_data.to_numpy().astype(np.float32),
+        options=options,
+        target_opset=10
+    )
     with open(f'{name}.onnx', "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
     # print(onnx_model)
@@ -442,7 +451,7 @@ def mlp(x_train, y_train, x_test, y_test):
     from sklearn.neural_network import MLPClassifier
     mlp_model = MLPClassifier()
 
-    parameter_grid = dict(activation=['relu'], max_iter=[100])
+    parameter_grid = dict(activation=['relu', 'tanh'], max_iter=[1000])
     grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -524,6 +533,9 @@ def main():
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
 
+    x_dataset = pd.concat([x_train, x_test])
+    y_dataset = pd.concat([y_train, y_test])
+
     baseline_results = dummy_baseline(x_train, y_train, x_test, y_test)
     print(f'Baseline results: {baseline_results}')
     print()
@@ -532,26 +544,36 @@ def main():
     print(f'Logistic regression: {best_logistic_regression_indicators}')
     print("Best params: ", logistic_grid_results.best_params_)
     print()
+    final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("logistic_regression", final_logistic_regression, x_dataset)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     print(f'Decision tree: {decision_tree_performance_indicators}')
     print("Best params: ", decision_tree_grid_results.best_params_)
     print()
+    final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     print(f'Random forest: {random_forest_performance_indicators}')
     print("Best params: ", random_forest_grid_results.best_params_)
     print()
+    final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("random_forest", final_random_forest_classifier, x_dataset)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     print(f'kNN: {knn_performance_indicators}')
     print("Best params: ", knn_grid_results.best_params_)
     print()
+    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("knn", final_knn_classifier, x_dataset)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
     print()
+    final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("mlp", final_mlp_classifier, x_dataset)
 
     bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
     print(f'Naive Bayes: {bayes_performance_indicators}')
@@ -575,25 +597,7 @@ def main():
             ]
         ), columns=metrics_headers)
 
-    to_csv = metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
-
-    x_dataset = pd.concat([x_train, x_test])
-    y_dataset = pd.concat([y_train, y_test])
-
-    final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("logistic_regression", final_logistic_regression, x_dataset)
-
-    final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset)
-
-    final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("random_forest", final_random_forest_classifier, x_dataset)
-
-    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("knn", final_knn_classifier, x_dataset)
-
-    final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("mlp", final_mlp_classifier, x_dataset)
+    metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
 
 
 if __name__ == "__main__":
