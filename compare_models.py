@@ -352,14 +352,7 @@ def persist_classifier(name, target_model, input_data, scaler):
     # print(predict_with_onnxruntime(onnx_model, training_data))
 
 
-def load_data():
-    data_points = np.concatenate(
-        (
-            read_data_points('data/csic2010/normalTrafficTraining.txt.csv'),
-            read_data_points('data/csic2010/normalTrafficTest.txt.csv'),
-            read_data_points('data/csic2010/anomalousTrafficTest.txt.csv'),
-        )
-    )
+def custom_features(data_points):
     dataframe = pd.DataFrame({
         'Attribute length': data_points[:, 0],
         'Number of letters': data_points[:, 1],
@@ -381,6 +374,17 @@ def load_data():
         'Label': data_points[:, 17],
     })
     return dataframe
+
+
+def load_data():
+    data_points = np.concatenate(
+        (
+            read_data_points('data/csic2010/normalTrafficTraining.txt.csv'),
+            read_data_points('data/csic2010/normalTrafficTest.txt.csv'),
+            read_data_points('data/csic2010/anomalousTrafficTest.txt.csv'),
+        )
+    )
+    return data_points
 
 
 def grid_search_best_parameters(parameter_grid, estimator_model, x, y):
@@ -530,7 +534,7 @@ def pca(x_train, y_train, x_test, y_test):
 
 
 def main():
-    df = load_data()
+    df = custom_features(load_data())
 
     # plot_histograms(df)
     train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
