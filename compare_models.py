@@ -22,9 +22,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
-from sklearn.naive_bayes import GaussianNB
+from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import OneClassSVM, SVC
+from sklearn.svm import OneClassSVM, SVC, SVR
 from sklearn.tree import DecisionTreeClassifier
 
 NORMAL_LABEL = 0
@@ -377,7 +377,7 @@ def custom_features(raw_requests):
 
 def load_csic():
     return read_requests('data/csic2010/normalTrafficTraining.txt.csv') + \
-           read_requests('data/csic2010/normalTrafficTest.txt.csv') +\
+           read_requests('data/csic2010/normalTrafficTest.txt.csv') + \
            read_requests('data/csic2010/anomalousTrafficTest.txt.csv')
 
 
@@ -527,22 +527,60 @@ def pca(x_train, y_train, x_test, y_test):
     pyplot.show()
 
 
-def vectorize_http_request():
+def preprocess_http_request_for_vectorization(raw_requests):
+    concatenated_requests = []
+    for raw_request in raw_requests:
+        concatenated_requests.append(' '.join(value for value in raw_request.values() if value != 'Class'))
+
+    request_labels = [NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL for raw_request in
+                      raw_requests]
+    return pd.DataFrame({'Text': concatenated_requests, 'Label': request_labels})
+
+
+def text_analysis_pipeline(classifier):
+    from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import CountVectorizer
-    count_vect = CountVectorizer()
+    from sklearn.feature_extraction.text import TfidfTransformer
+    text_pipeline = Pipeline(
+        [
+            ('vectorizer', CountVectorizer()),
+            ('tfidf', TfidfTransformer()),
+            ('classifier', classifier)
+        ])
+    return text_pipeline
 
 
-def main():
-    df = custom_features(load_csic())
+def bag_of_words(requests, classifier):
+    dataset = preprocess_http_request_for_vectorization(requests)
+    x_train, y_train, x_test, y_test = split_train_test(dataset, 0.8)
+    # Coerce to arrays
+    x_train = x_train['Text']
+    x_test = x_test['Text']
+    text_classifier = text_analysis_pipeline(classifier)
+    text_classifier.fit(x_train, y_train)
+    y_pred = text_classifier.predict(x_test)
+    from sklearn.metrics import classification_report
+    print(classification_report(y_true=y_test, y_pred=y_pred, digits=4))
 
-    # plot_histograms(df)
-    train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
 
-    print(train.shape, test.shape)
+def split_train_test(dataset, train_proportion):
+    train, test = np.split(dataset.sample(frac=1), [int(train_proportion * len(dataset))])
     y_train = train['Label']
     x_train = train.drop(['Label'], axis=1)
     y_test = test['Label']
     x_test = test.drop(['Label'], axis=1)
+    return x_train, y_train, x_test, y_test
+
+
+def main():
+    requests = load_csic()
+
+    bag_of_words(requests, LogisticRegression())
+    bag_of_words(requests, MultinomialNB())
+
+    df = custom_features(requests)
+    # plot_histograms(df)
+    x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
     # Scale the values based on the training data
     scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
