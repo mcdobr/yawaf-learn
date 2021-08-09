@@ -325,14 +325,22 @@ def predict_with_onnxruntime(onnx_model, x):
     return res[0]
 
 
-def persist_classifier(name, target_model, input_data):
-    """This persists the model after being fitted with the whole dataset, to allow deployment to production"""
+def persist_classifier(name, target_model, input_data, scaler):
+    """This persists the model after being fitted with the whole dataset, to allow deployment to production
+    :param scaler: the component used for numerical scaling relative to the training set
+    """
+
+    from sklearn.pipeline import Pipeline
+    pipeline = Pipeline([
+        ('scaler', scaler),
+        ('classifier', target_model)
+    ])
 
     # ZipMap not supported by tract so this would enable at least a few models to be used
     options = {id(target_model): {'zipmap': False}}
 
     onnx_model = to_onnx(
-        model=target_model,
+        model=pipeline,
         X=input_data.to_numpy().astype(np.float32),
         options=options,
         target_opset=10
@@ -408,7 +416,14 @@ def logistic_regression(x_train, y_train, x_test, y_test):
 
     # Grid search for best parameters
     c_values = [1000, 100, 10, 1.0, 0.1, 0.01, 0.001]
-    parameter_grid = dict(penalty=['l2'], C=c_values, solver=['lbfgs'], max_iter=[100, 1000]),
+    parameter_grid = dict(
+        penalty=['l2'],
+        C=c_values,
+        solver=['lbfgs'],
+        max_iter=[100, 1000],
+        multi_class=['multinomial', 'ovr'],
+        class_weight=[None, 'balanced']
+    ),
     grid_search = grid_search_best_parameters(parameter_grid, logistic_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -545,35 +560,35 @@ def main():
     print("Best params: ", logistic_grid_results.best_params_)
     print()
     final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("logistic_regression", final_logistic_regression, x_dataset)
+    persist_classifier("logistic_regression", final_logistic_regression, x_dataset, scaler)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     print(f'Decision tree: {decision_tree_performance_indicators}')
     print("Best params: ", decision_tree_grid_results.best_params_)
     print()
     final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset)
+    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset, scaler)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     print(f'Random forest: {random_forest_performance_indicators}')
     print("Best params: ", random_forest_grid_results.best_params_)
     print()
     final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("random_forest", final_random_forest_classifier, x_dataset)
+    persist_classifier("random_forest", final_random_forest_classifier, x_dataset, scaler)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     print(f'kNN: {knn_performance_indicators}')
     print("Best params: ", knn_grid_results.best_params_)
     print()
     final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("knn", final_knn_classifier, x_dataset)
+    persist_classifier("knn", final_knn_classifier, x_dataset, scaler)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
     print()
     final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("mlp", final_mlp_classifier, x_dataset)
+    persist_classifier("mlp", final_mlp_classifier, x_dataset, scaler)
 
     bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
     print(f'Naive Bayes: {bayes_performance_indicators}')
