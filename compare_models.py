@@ -274,7 +274,7 @@ def count_appearances(words, needles):
     return appearances
 
 
-def read_data_points(file_path):
+def read_requests(file_path):
     with open(file_path) as file:
         reader = csv.DictReader(file)
         raw_requests = list(reader)
@@ -284,36 +284,7 @@ def read_data_points(file_path):
                 raw_request['Query'] = urllib.parse.unquote(raw_request['Query'])
             else:
                 raw_request['Body'] = urllib.parse.unquote_plus(raw_request['Body'])
-
-        data_points_list = []
-        for raw_request in raw_requests:
-            min_byte, max_byte, mean_byte, median_byte, unique_bytes = byte_distribution(raw_request)
-
-            request_vector = np.array([
-                attribute_length(raw_request),
-                number_of_letters(raw_request),
-                non_printable_characters(raw_request),
-                entropy(raw_request),
-                url_length(raw_request),
-                path_non_alpha(raw_request),
-                sql_keywords(raw_request),
-                total_length(raw_request),
-                count_html_tags(raw_request),
-                count_js_keywords(raw_request),
-                count_event_handlers(raw_request),
-                count_unix_shell_keywords(raw_request),
-                min_byte,
-                max_byte,
-                mean_byte,
-                median_byte,
-                unique_bytes,
-                NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL
-            ])
-
-            data_points_list.append(request_vector)
-
-        data_points = np.asarray(data_points_list)
-        return data_points
+        return raw_requests
 
 
 def predict_with_onnxruntime(onnx_model, x):
@@ -352,7 +323,35 @@ def persist_classifier(name, target_model, input_data, scaler):
     # print(predict_with_onnxruntime(onnx_model, training_data))
 
 
-def custom_features(data_points):
+def custom_features(raw_requests):
+    data_points_list = []
+    for raw_request in raw_requests:
+        min_byte, max_byte, mean_byte, median_byte, unique_bytes = byte_distribution(raw_request)
+
+        request_vector = np.array([
+            attribute_length(raw_request),
+            number_of_letters(raw_request),
+            non_printable_characters(raw_request),
+            entropy(raw_request),
+            url_length(raw_request),
+            path_non_alpha(raw_request),
+            sql_keywords(raw_request),
+            total_length(raw_request),
+            count_html_tags(raw_request),
+            count_js_keywords(raw_request),
+            count_event_handlers(raw_request),
+            count_unix_shell_keywords(raw_request),
+            min_byte,
+            max_byte,
+            mean_byte,
+            median_byte,
+            unique_bytes,
+            NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL
+        ])
+
+        data_points_list.append(request_vector)
+
+    data_points = np.asarray(data_points_list)
     dataframe = pd.DataFrame({
         'Attribute length': data_points[:, 0],
         'Number of letters': data_points[:, 1],
@@ -376,15 +375,10 @@ def custom_features(data_points):
     return dataframe
 
 
-def load_data():
-    data_points = np.concatenate(
-        (
-            read_data_points('data/csic2010/normalTrafficTraining.txt.csv'),
-            read_data_points('data/csic2010/normalTrafficTest.txt.csv'),
-            read_data_points('data/csic2010/anomalousTrafficTest.txt.csv'),
-        )
-    )
-    return data_points
+def load_csic():
+    return read_requests('data/csic2010/normalTrafficTraining.txt.csv') + \
+           read_requests('data/csic2010/normalTrafficTest.txt.csv') +\
+           read_requests('data/csic2010/anomalousTrafficTest.txt.csv')
 
 
 def grid_search_best_parameters(parameter_grid, estimator_model, x, y):
@@ -533,8 +527,13 @@ def pca(x_train, y_train, x_test, y_test):
     pyplot.show()
 
 
+def vectorize_http_request():
+    from sklearn.feature_extraction.text import CountVectorizer
+    count_vect = CountVectorizer()
+
+
 def main():
-    df = custom_features(load_data())
+    df = custom_features(load_csic())
 
     # plot_histograms(df)
     train, test = np.split(df.sample(frac=1), [int(0.8 * len(df))])
