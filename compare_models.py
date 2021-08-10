@@ -296,31 +296,40 @@ def predict_with_onnxruntime(onnx_model, x):
     return res[0]
 
 
-def persist_classifier(name, target_model, input_data, scaler):
-    """This persists the model after being fitted with the whole dataset, to allow deployment to production
-    :param scaler: the component used for numerical scaling relative to the training set
-    """
-
+def create_custom_features_pipeline(scaler, classifier):
     from sklearn.pipeline import Pipeline
     pipeline = Pipeline([
         ('scaler', scaler),
-        ('classifier', target_model)
+        ('classifier', classifier)
     ])
+    return pipeline
+
+
+def persist_classifier(name, pipeline, input_data):
+    """This persists the model after being fitted with the whole dataset, to allow deployment to production
+    """
+    from onnxconverter_common import StringTensorType
 
     # ZipMap not supported by tract so this would enable at least a few models to be used
-    options = {id(target_model): {'zipmap': False}}
+    options = {id(pipeline.named_steps['classifier']): {'zipmap': False}}
 
-    onnx_model = to_onnx(
-        model=pipeline,
-        X=input_data.to_numpy().astype(np.float32),
-        options=options,
-        target_opset=10
-    )
+    if isinstance(input_data, list) and isinstance(input_data[0], dict):
+        onnx_model = to_onnx(
+            model=pipeline,
+            initial_types=[("raw_request", StringTensorType([None, 1]))],
+            options=options,
+            target_opset=10
+        )
+    else:
+        onnx_model = to_onnx(
+            model=pipeline,
+            X=input_data.to_numpy().astype(np.float32),
+            options=options,
+            target_opset=10
+        )
     with open(f'{name}.onnx', "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
-    # print(onnx_model)
-    # print(training_data[0])
-    # print(predict_with_onnxruntime(onnx_model, training_data))
+    return onnx_model
 
 
 def custom_features(raw_requests):
@@ -464,7 +473,13 @@ def mlp(x_train, y_train, x_test, y_test):
     from sklearn.neural_network import MLPClassifier
     mlp_model = MLPClassifier()
 
-    parameter_grid = dict(activation=['relu', 'tanh'], max_iter=[1000])
+    parameter_grid = dict(
+        hidden_layer_sizes=[(50, 50, 50), (50, 100, 50), (100,)],
+        alpha=[0.0001, 0.01],
+        activation=['relu', 'tanh'],
+        max_iter=[1000],
+        learning_rate=['constant', 'adaptive']
+    )
     grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -539,12 +554,12 @@ def preprocess_http_request_for_vectorization(raw_requests):
 
 def text_analysis_pipeline(classifier):
     from sklearn.pipeline import Pipeline
-    from sklearn.feature_extraction.text import CountVectorizer
-    from sklearn.feature_extraction.text import TfidfTransformer
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.feature_selection import SelectKBest
     text_pipeline = Pipeline(
         [
-            ('vectorizer', CountVectorizer()),
-            ('tfidf', TfidfTransformer()),
+            ('tfidf', TfidfVectorizer(ngram_range=(1, 2))),
+            ('feature_reduction', SelectKBest(k=10)),
             ('classifier', classifier)
         ])
     return text_pipeline
@@ -559,8 +574,13 @@ def bag_of_words(requests, classifier):
     text_classifier = text_analysis_pipeline(classifier)
     text_classifier.fit(x_train, y_train)
     y_pred = text_classifier.predict(x_test)
+
+    # x_train_numerical = text_classifier.named_steps['tfidf'].transform(x_train)
+    # x_test_numerical = text_classifier.named_steps['tfidf'].transform(x_test)
+    # pca(x_train_numerical, y_train, x_test_numerical, y_test)
     from sklearn.metrics import classification_report
     print(classification_report(y_true=y_test, y_pred=y_pred, digits=4))
+    return text_classifier
 
 
 def split_train_test(dataset, train_proportion):
@@ -575,8 +595,11 @@ def split_train_test(dataset, train_proportion):
 def main():
     requests = load_csic()
 
-    bag_of_words(requests, LogisticRegression())
-    bag_of_words(requests, MultinomialNB())
+    tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
+    # persist_classifier("tfidf_logistic_regression", tfidf_logistic_regression, requests)
+
+    tfidf_multinomial_naive_bayes = bag_of_words(requests, MultinomialNB())
+    # persist_classifier("tfidf_multinomial_naive_bayes", tfidf_multinomial_naive_bayes, requests)
 
     df = custom_features(requests)
     # plot_histograms(df)
@@ -601,35 +624,42 @@ def main():
     print("Best params: ", logistic_grid_results.best_params_)
     print()
     final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("logistic_regression", final_logistic_regression, x_dataset, scaler)
+    persist_classifier("logistic_regression",
+                       create_custom_features_pipeline(scaler=scaler, classifier=final_logistic_regression), x_dataset)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     print(f'Decision tree: {decision_tree_performance_indicators}')
     print("Best params: ", decision_tree_grid_results.best_params_)
     print()
     final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("decision_tree", final_decision_tree_classifier, x_dataset, scaler)
+    persist_classifier("decision_tree",
+                       create_custom_features_pipeline(scaler=scaler, classifier=final_decision_tree_classifier),
+                       x_dataset)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     print(f'Random forest: {random_forest_performance_indicators}')
     print("Best params: ", random_forest_grid_results.best_params_)
     print()
     final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("random_forest", final_random_forest_classifier, x_dataset, scaler)
+    persist_classifier("random_forest",
+                       create_custom_features_pipeline(scaler=scaler, classifier=final_random_forest_classifier),
+                       x_dataset)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     print(f'kNN: {knn_performance_indicators}')
     print("Best params: ", knn_grid_results.best_params_)
     print()
     final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("knn", final_knn_classifier, x_dataset, scaler)
+    persist_classifier("knn", create_custom_features_pipeline(scaler=scaler, classifier=final_knn_classifier),
+                       x_dataset)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
     print()
     final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("mlp", final_mlp_classifier, x_dataset, scaler)
+    persist_classifier("mlp", create_custom_features_pipeline(scaler=scaler, classifier=final_mlp_classifier),
+                       x_dataset)
 
     bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
     print(f'Naive Bayes: {bayes_performance_indicators}')
