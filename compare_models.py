@@ -10,8 +10,10 @@ import datetime
 import re
 import urllib.parse
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib import pyplot
 from skl2onnx import to_onnx
 from sklearn import preprocessing
@@ -595,13 +597,15 @@ def split_train_test(dataset, train_proportion):
 def main():
     requests = load_csic()
 
-    tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
+    # tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
     # persist_classifier("tfidf_logistic_regression", tfidf_logistic_regression, requests)
 
-    tfidf_multinomial_naive_bayes = bag_of_words(requests, MultinomialNB())
+    # tfidf_multinomial_naive_bayes = bag_of_words(requests, MultinomialNB())
     # persist_classifier("tfidf_multinomial_naive_bayes", tfidf_multinomial_naive_bayes, requests)
 
     df = custom_features(requests)
+    plot_heatmap(df)
+
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
     # Scale the values based on the training data
@@ -684,6 +688,24 @@ def main():
         ), columns=metrics_headers)
 
     metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
+
+
+def plot_heatmap(df):
+    # Draw the heatmap with the mask and correct aspect ratio
+    sns.set_theme(style="white")
+
+    correlation = df.corr()
+    mask = np.tril(np.ones_like(correlation, dtype=bool))
+
+    f, ax = plt.subplots(figsize=(10, 10))
+
+    color_map = sns.diverging_palette(230, 20, as_cmap=True)
+
+    sns.heatmap(correlation, mask=mask, cmap=color_map, vmax=.3, center=0,
+                square=True, annot=True, linewidths=.5, cbar_kws={"shrink": .5})
+
+    plt.show()
+    print("Plotted heatmap")
 
 
 if __name__ == "__main__":
