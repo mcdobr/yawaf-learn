@@ -19,13 +19,16 @@ from skl2onnx import to_onnx
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import Pipeline
 from sklearn.svm import OneClassSVM, SVC, SVR
 from sklearn.tree import DecisionTreeClassifier
 
@@ -282,8 +285,9 @@ def read_requests(file_path):
         raw_requests = list(reader)
 
         for raw_request in raw_requests:
+            raw_request['Path'] = urllib.parse.unquote(raw_request['Path'])
             if raw_request['Method'] == 'GET':
-                raw_request['Query'] = urllib.parse.unquote(raw_request['Query'])
+                raw_request['Query'] = urllib.parse.unquote_plus(raw_request['Query'])
             else:
                 raw_request['Body'] = urllib.parse.unquote_plus(raw_request['Body'])
         return raw_requests
@@ -366,7 +370,7 @@ def custom_features(raw_requests):
     dataframe = pd.DataFrame({
         'Attribute length': data_points[:, 0],
         'Number of letters': data_points[:, 1],
-        'Non printable characters': data_points[:, 2],
+        # 'Non printable characters': data_points[:, 2],
         'Entropy': data_points[:, 3],
         'URL length': data_points[:, 4],
         'Non alphabetical chars in path': data_points[:, 5],
@@ -374,9 +378,9 @@ def custom_features(raw_requests):
         'Total length': data_points[:, 7],
         'Number of HTML tags': data_points[:, 8],
         'JavaScript keywords': data_points[:, 9],
-        'JavaScript event handlers': data_points[:, 10],
+        # 'JavaScript event handlers': data_points[:, 10],
         'Unix shell keywords': data_points[:, 11],
-        'Minimum byte': data_points[:, 12],
+        # 'Minimum byte': data_points[:, 12],
         'Maximum byte': data_points[:, 13],
         'Mean byte': data_points[:, 14],
         'Median byte': data_points[:, 15],
@@ -424,16 +428,22 @@ def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression(n_jobs=-1)
 
     # Grid search for best parameters
-    c_values = [1000, 100, 10, 1.0, 0.1, 0.01, 0.001]
-    parameter_grid = dict(
-        penalty=['l2'],
-        C=c_values,
-        solver=['lbfgs'],
-        max_iter=[100, 1000],
-        multi_class=['multinomial', 'ovr'],
-        class_weight=[None, 'balanced']
-    ),
-    grid_search = grid_search_best_parameters(parameter_grid, logistic_model, x_train, y_train)
+    c_values = [10, 1.0, 0.1]
+    parameter_grid = {
+        'selector__k': [3, 5, 10, 'all'],
+        'classifier__penalty': ['l2'],
+        'classifier__C': c_values,
+        'classifier__solver': ['lbfgs'],
+        'classifier__max_iter': [100],
+        'classifier__multi_class': ['ovr'],
+        'classifier__class_weight': [None, 'balanced']
+    }
+
+    logistic_pipeline = Pipeline([
+        ('selector', SelectKBest(score_func=f_classif)),
+        ('classifier', logistic_model)
+    ])
+    grid_search = grid_search_best_parameters(parameter_grid, logistic_pipeline, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -443,7 +453,10 @@ def decision_tree(x_train, y_train, x_test, y_test):
     decision_tree_model = DecisionTreeClassifier()
     decision_tree_model.fit(x_train, y_train)
 
-    parameter_grid = dict(max_depth=[None, 3], max_features=['sqrt', 'log2', None])
+    parameter_grid = dict(
+        max_depth=[None, 3],
+        max_features=['sqrt', 'log2', None]
+    )
     grid_search = grid_search_best_parameters(parameter_grid, decision_tree_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -476,11 +489,12 @@ def mlp(x_train, y_train, x_test, y_test):
     mlp_model = MLPClassifier()
 
     parameter_grid = dict(
-        hidden_layer_sizes=[(50, 50, 50), (50, 100, 50), (100,)],
-        alpha=[0.0001, 0.01],
-        activation=['relu', 'tanh'],
+        # /*(50, 50, 50), (50, 100, 50),
+        hidden_layer_sizes=[(100,)],
+        alpha=[0.0001],  # 0.01,
+        activation=['relu'],  # tanh
         max_iter=[1000],
-        learning_rate=['constant', 'adaptive']
+        learning_rate=['constant']  # adaptive
     )
     grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
 
@@ -585,6 +599,15 @@ def bag_of_words(requests, classifier):
     return text_classifier
 
 
+def voting_ensemble(x_train, y_train, x_test, y_test):
+    models = [('lr', LogisticRegression()), ('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier())]
+    voting_model = VotingClassifier(estimators=models)
+
+    voting_model.fit(x_train, y_train)
+    y_test_pred = pd.DataFrame(voting_model.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), voting_model
+
+
 def split_train_test(dataset, train_proportion):
     train, test = np.split(dataset.sample(frac=1), [int(train_proportion * len(dataset))])
     y_train = train['Label']
@@ -604,14 +627,19 @@ def main():
     # persist_classifier("tfidf_multinomial_naive_bayes", tfidf_multinomial_naive_bayes, requests)
 
     df = custom_features(requests)
-    plot_heatmap(df)
+    # plot_heatmap(df)
 
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
+
+    # get_random_forest_feature_importance(x_train, y_train)
+
     # Scale the values based on the training data
     scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
+
+    print(voting_ensemble(x_train, y_train, x_test, y_test))
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
@@ -649,20 +677,20 @@ def main():
                        create_custom_features_pipeline(scaler=scaler, classifier=final_random_forest_classifier),
                        x_dataset)
 
-    knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
-    print(f'kNN: {knn_performance_indicators}')
-    print("Best params: ", knn_grid_results.best_params_)
-    print()
-    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("knn", create_custom_features_pipeline(scaler=scaler, classifier=final_knn_classifier),
-                       x_dataset)
-
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
     print()
     final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
     persist_classifier("mlp", create_custom_features_pipeline(scaler=scaler, classifier=final_mlp_classifier),
+                       x_dataset)
+
+    knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
+    print(f'kNN: {knn_performance_indicators}')
+    print("Best params: ", knn_grid_results.best_params_)
+    print()
+    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("knn", create_custom_features_pipeline(scaler=scaler, classifier=final_knn_classifier),
                        x_dataset)
 
     bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
@@ -688,6 +716,13 @@ def main():
         ), columns=metrics_headers)
 
     metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
+
+
+def get_random_forest_feature_importance(x_train, y_train):
+    rf = RandomForestClassifier()
+    rf.fit(x_train, y_train)
+    print(sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True))
+    print("Printed feature importances")
 
 
 def plot_heatmap(df):
