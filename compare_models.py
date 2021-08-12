@@ -453,7 +453,7 @@ def decision_tree(x_train, y_train, x_test, y_test):
 
     parameter_grid = dict(
         max_depth=[None, 3],
-        max_features=['sqrt', 'log2', None]
+        max_features=['sqrt', None],
     )
     grid_search = grid_search_best_parameters(parameter_grid, decision_tree_model, x_train, y_train)
 
