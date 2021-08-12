@@ -475,7 +475,7 @@ def knn(x_train, y_train, x_test, y_test):
     knn_model = KNeighborsClassifier(n_jobs=-1)
     knn_model.fit(x_train, y_train)
 
-    parameter_grid = dict(n_neighbors=[1, 2, 3], weights=['uniform', 'distance'])
+    parameter_grid = dict(n_neighbors=[1, 3, 5], weights=['uniform', 'distance'])
     grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
