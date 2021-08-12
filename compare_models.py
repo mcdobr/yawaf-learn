@@ -21,7 +21,7 @@ from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier, BaggingClassifier, StackingClassifier
 from sklearn.feature_selection import SelectKBest, f_classif
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
@@ -669,6 +669,18 @@ def split_train_test(dataset, train_proportion):
     return x_train, y_train, x_test, y_test
 
 
+def sgd(x_train, y_train, x_test, y_test):
+    sgd = SGDClassifier(n_jobs=-1)
+    sgd.fit(x_train, y_train)
+
+    parameter_grid = dict(
+    )
+    grid_search = grid_search_best_parameters(parameter_grid, sgd, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
+
+
 def main():
     requests = load_csic()
 
@@ -748,13 +760,21 @@ def main():
     persist_classifier("knn", create_custom_features_pipeline(scaler=scaler, classifier=final_knn_classifier),
                        x_dataset)
 
-    bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
-    print(f'Naive Bayes: {bayes_performance_indicators}')
+    sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
+    print(f'sgd: {sgd_performance_indicators}')
+    print("Best params: ", sgd_grid_results.best_params_)
     print()
+    final_sgd_classifier = sgd_grid_results.best_estimator_.fit(x_dataset, y_dataset)
+    persist_classifier("sgd", create_custom_features_pipeline(scaler=scaler, classifier=final_sgd_classifier),
+                       x_dataset)
 
-    svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
-    print(f'SVM: {svm_performance_indicators}')
-    print()
+    # bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
+    # print(f'Naive Bayes: {bayes_performance_indicators}')
+    # print()
+    #
+    # svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
+    # print(f'SVM: {svm_performance_indicators}')
+    # print()
 
     metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
@@ -765,8 +785,8 @@ def main():
                 random_forest_performance_indicators,
                 knn_performance_indicators,
                 mlp_performance_indicators,
-                bayes_performance_indicators,
-                svm_performance_indicators,
+                # bayes_performance_indicators,
+                # svm_performance_indicators,
             ]
         ), columns=metrics_headers)
 
