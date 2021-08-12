@@ -19,7 +19,7 @@ from skl2onnx import to_onnx
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier, BaggingClassifier, StackingClassifier
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
@@ -251,8 +251,6 @@ def count_unix_shell_keywords(request_dict, split_pattern='\\W'):
     return result
 
 
-# def powershell_keywords(request_dict, split_patter)
-
 def byte_distribution(request_dict):
     from statistics import mean, median
     from math import floor
@@ -397,7 +395,7 @@ def load_csic():
 
 
 def grid_search_best_parameters(parameter_grid, estimator_model, x, y):
-    cross_validator = RepeatedStratifiedKFold(n_splits=10, n_repeats=3)
+    cross_validator = RepeatedStratifiedKFold(n_splits=2, n_repeats=3)
     grid_search = GridSearchCV(
         estimator=estimator_model,
         param_grid=parameter_grid,
@@ -509,7 +507,7 @@ def naive_bayes(x_train, y_train, x_test, y_test):
     grid_search = grid_search_best_parameters(parameter_grid, bayes, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def svm(x_train, y_train, x_test, y_test):
@@ -519,7 +517,7 @@ def svm(x_train, y_train, x_test, y_test):
     grid_search = grid_search_best_parameters(parameter_grid, svm_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred)
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def dummy_baseline(x_train, y_train, x_test, y_test):
@@ -600,12 +598,66 @@ def bag_of_words(requests, classifier):
 
 
 def voting_ensemble(x_train, y_train, x_test, y_test):
-    models = [('lr', LogisticRegression()), ('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier())]
-    voting_model = VotingClassifier(estimators=models)
+    models = [('lr', LogisticRegression()), ('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier(max_iter=1000))]
+    voting_model = VotingClassifier(estimators=models, voting='hard', weights=[0.1, 0.7, 0.2], n_jobs=-1)
 
     voting_model.fit(x_train, y_train)
     y_test_pred = pd.DataFrame(voting_model.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), voting_model
+
+
+def bagging_knn(x_train, y_train, x_test, y_test):
+    bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=3),
+                                bootstrap=False,
+                                n_estimators=10,
+                                max_features=5)
+
+    bagging.fit(x_train, y_train)
+    y_test_pred = pd.DataFrame(bagging.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), bagging
+
+
+def arbitrary_stack(x_train, y_train, x_test, y_test):
+    models = [('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier(max_iter=1000))]
+    stack = StackingClassifier(
+        estimators=models,
+        final_estimator=None,  # Logistic regression
+        n_jobs=-1)
+    stack.fit(x_train, y_train)
+    y_test_pred = pd.DataFrame(stack.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), stack
+
+
+def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test):
+    sorted_features = get_random_forest_feature_importance(x_train, y_train)
+
+    first_subset_features = list(map(lambda x: x[1], sorted_features[:5]))
+    second_subset_features = list(map(lambda x: x[1], sorted_features[5:10]))
+    third_subset_features = list(map(lambda x: x[1], sorted_features[10:]))
+
+    x_train_first = x_train[first_subset_features]
+    x_test_first = x_test[first_subset_features]
+
+    x_train_second = x_train[second_subset_features]
+    x_test_second = x_test[second_subset_features]
+
+    x_train_third = x_train[third_subset_features]
+    x_test_third = x_test[third_subset_features]
+
+    rf = RandomForestClassifier(n_jobs=-1)
+    rf.fit(x_train_first, y_train)
+    y_pred_first = rf.predict(x_test_first)
+
+    mlp = MLPClassifier(max_iter=1000)
+    mlp.fit(x_train_second, y_train)
+    y_pred_second = mlp.predict(x_test_second)
+
+    knn = KNeighborsClassifier(n_neighbors=3)
+    knn.fit(x_train_third, y_train)
+    y_pred_third = knn.predict(x_test_third)
+
+    y_pred = [0 if sum(x) <= 1 else 1 for x in zip(y_pred_first, y_pred_second, y_pred_third)]
+    return compute_indicators(y_true=y_test, y_pred=y_pred)
 
 
 def split_train_test(dataset, train_proportion):
@@ -639,7 +691,10 @@ def main():
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
 
+    print(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
     print(voting_ensemble(x_train, y_train, x_test, y_test))
+    print(bagging_knn(x_train, y_train, x_test, y_test))
+    print(arbitrary_stack(x_train, y_train, x_test, y_test))
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
@@ -721,8 +776,10 @@ def main():
 def get_random_forest_feature_importance(x_train, y_train):
     rf = RandomForestClassifier()
     rf.fit(x_train, y_train)
-    print(sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True))
+    sorted_features = sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True)
+    print(sorted_features)
     print("Printed feature importances")
+    return sorted_features
 
 
 def plot_heatmap(df):
