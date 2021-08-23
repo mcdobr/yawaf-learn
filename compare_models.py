@@ -740,8 +740,8 @@ def sgd(x_train, y_train, x_test, y_test):
 
 
 # See https://scikit-learn.org/stable/auto_examples/model_selection/plot_learning_curve.html
-def plot_model_performance(estimator, title, X, y, axes=None, ylim=None, cv=None,
-                           n_jobs=None, train_sizes=np.linspace(.1, 1.0, 5)):
+def plot_model_cv_performance(estimator, title, X, y, axes=None, ylim=None, cv=None,
+                              n_jobs=None, train_sizes=np.linspace(.1, 1.0, 5)):
     from sklearn.model_selection import learning_curve
     if axes is None:
         _, axes = plt.subplots(1, 3, figsize=(20, 5))
@@ -824,6 +824,7 @@ def main():
     get_random_forest_feature_importance(x_train, y_train)
 
     # Scale the values based on the training data
+    # todo: maybe put the scaler in individual pipelines?
     scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
@@ -838,10 +839,8 @@ def main():
     logging.info("Baseline results: {}".format(baseline_results))
 
     best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
-    logging.info("Logistic regression: {}".format(best_logistic_regression_indicators))
-    logging.info("Best params: {}".format(logistic_grid_results.best_params_))
-    plot_model_performance(estimator=logistic_grid_results.best_estimator_, title="Logistic regression",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=logistic_grid_results.cv, n_jobs=-1)
+    save_test_performance("Logistic regression", logistic_grid_results, best_logistic_regression_indicators, x_train,
+                          y_train)
     create_persisted_model("logistic_regression",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=logistic_grid_results.best_estimator_),
@@ -849,10 +848,8 @@ def main():
                            y_dataset)
 
     voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
-    logging.info("Voting ensemble: {}".format(voting_ensemble_indicators))
-    logging.info("Best params: {}".format(voting_ensemble_grid_results.best_params_))
-    plot_model_performance(estimator=voting_ensemble_grid_results.best_estimator_, title="Voting ensemble",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=voting_ensemble_grid_results.cv, n_jobs=-1)
+    save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_grid_results, x_train,
+                          y_train)
     create_persisted_model("voting_ensemble",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=voting_ensemble_grid_results.best_estimator_),
@@ -860,10 +857,7 @@ def main():
                            y_dataset)
 
     best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
-    logging.info("Linear SVM: {}".format(best_linear_svm_indicators))
-    logging.info("Best params: {}".format(linear_svm_grid_results.best_params_))
-    plot_model_performance(estimator=linear_svm_grid_results.best_estimator_, title="Linear SVM",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=linear_svm_grid_results.cv, n_jobs=-1)
+    save_test_performance("Linear SVM", linear_svm_grid_results, best_linear_svm_indicators, x_train, y_train)
     create_persisted_model("linear_svm",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=linear_svm_grid_results.best_estimator_),
@@ -871,60 +865,44 @@ def main():
                            y_dataset)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
-    logging.info("Decision tree: {}".format(decision_tree_performance_indicators))
-    logging.info("Best params: {}".format(decision_tree_grid_results.best_params_))
-    plot_model_performance(estimator=decision_tree_grid_results.best_estimator_, title="Decision tree",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=decision_tree_grid_results.cv, n_jobs=-1)
+    save_test_performance("Decision Tree", decision_tree_grid_results, decision_tree_performance_indicators, x_train,
+                          y_train)
     create_persisted_model("decision_tree", create_custom_features_pipeline(scaler=scaler,
                                                                             classifier=decision_tree_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
-    logging.info("Random forest: {}".format(random_forest_performance_indicators))
-    logging.info("Best params: {}".format(random_forest_grid_results.best_params_))
-    plot_model_performance(estimator=random_forest_grid_results.best_estimator_, title="Random forest",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=random_forest_grid_results.cv, n_jobs=-1)
+    save_test_performance("Random Forest", random_forest_grid_results, random_forest_performance_indicators, x_train,
+                          y_train)
     create_persisted_model("random_forest",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=random_forest_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
-    logging.info("MLP: {}".format(mlp_performance_indicators))
-    logging.info("Best params: {}".format(mlp_grid_results.best_params_))
-    plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="Multi layer perceptron",
-                           X=x_dataset, y=y_dataset, ylim=(0.6, 1.01), cv=mlp_grid_results.cv, n_jobs=-1)
+    save_test_performance("Multi layer perceptron", mlp_grid_results, mlp_performance_indicators, x_train, y_train)
     create_persisted_model("mlp",
                            create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
                            x_train, y_train)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
-    logging.info("kNN: {}".format(knn_performance_indicators))
-    logging.info("Best params: {}".format(knn_grid_results.best_params_))
-
-    plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="kNN",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=knn_grid_results.cv, n_jobs=-1)
+    save_test_performance("K nearest neighbors", knn_grid_results, knn_performance_indicators, x_train, y_train)
     create_persisted_model("knn",
                            create_custom_features_pipeline(scaler=scaler, classifier=knn_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
-    logging.info("SGD classifier: {}".format(sgd_performance_indicators))
-    logging.info("Best params: {}".format(sgd_grid_results.best_params_))
-
-    plot_model_performance(estimator=sgd_grid_results.best_estimator_,
-                           title="Stochastic gradient descent linear classifier",
-                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=sgd_grid_results.cv, n_jobs=-1)
-    final_sgd_classifier = sgd_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    create_persisted_model("sgd", create_custom_features_pipeline(scaler=scaler, classifier=final_sgd_classifier),
+    save_test_performance("Stochastic gradient descent classifier", sgd_grid_results, sgd_performance_indicators,
+                          x_train, y_train)
+    create_persisted_model("sgd",
+                           create_custom_features_pipeline(scaler=scaler, classifier=sgd_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
     logging.info(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
     logging.info(bagging_knn(x_train, y_train, x_test, y_test))
 
-    ## Todo: extract this
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
-    logging.info(stack_perf_indicators)
+    save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
@@ -937,13 +915,20 @@ def main():
                 ["knn"] + knn_performance_indicators,
                 ["mlp"] + mlp_performance_indicators,
                 ["lr_dt_mlp_voting"] + voting_ensemble_indicators,
-                ["dt_mlp_knn_stacked"] + arbitrary_stack()
+                ["dt_mlp_knn_stacked"] + stack_perf_indicators,
             ]
         ), columns=metrics_headers)
 
     metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
     logging.info("Wrote values to CSV file")
     logging.info("Ended analysis...")
+
+
+def save_test_performance(name, grid_results, performance_indicators, x_train, y_train):
+    logging.info("{} performance indicators: {}".format(name, performance_indicators))
+    logging.info("Best params: {}".format(grid_results.best_params_))
+    plot_model_cv_performance(estimator=grid_results.best_estimator_, title=name,
+                              X=x_train, y=y_train, ylim=(0.6, 1.01), cv=grid_results.cv, n_jobs=-1)
 
 
 def get_random_forest_feature_importance(x_train, y_train):
