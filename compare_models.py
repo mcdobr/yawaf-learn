@@ -22,14 +22,14 @@ from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier, BaggingClassifier, StackingClassifier
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression, SGDClassifier
-from sklearn.metrics import f1_score, precision_recall_fscore_support, matthews_corrcoef, accuracy_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support, matthews_corrcoef, accuracy_score
 from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
-from sklearn.naive_bayes import GaussianNB, MultinomialNB
+from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.svm import OneClassSVM, SVC, SVR
+from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 NORMAL_LABEL = 0
@@ -309,15 +309,17 @@ def create_custom_features_pipeline(scaler, classifier):
     return pipeline
 
 
-def persist_classifier(name, pipeline, input_data):
+def create_persisted_model(name, pipeline, x, y):
     """This persists the model after being fitted with the whole dataset, to allow deployment to production
+    :param y:
     """
     from onnxconverter_common import StringTensorType
 
     # ZipMap not supported by tract so this would enable at least a few models to be used
+
     options = {id(pipeline.named_steps['classifier']): {'zipmap': False}}
 
-    if isinstance(input_data, list) and isinstance(input_data[0], dict):
+    if isinstance(x, list) and isinstance(x[0], dict):
         onnx_model = to_onnx(
             model=pipeline,
             initial_types=[("raw_request", StringTensorType([None, 1]))],
@@ -327,7 +329,7 @@ def persist_classifier(name, pipeline, input_data):
     else:
         onnx_model = to_onnx(
             model=pipeline,
-            X=input_data.to_numpy().astype(np.float32),
+            X=x.to_numpy().astype(np.float32),
             options=options,
             target_opset=10
         )
@@ -422,6 +424,8 @@ def compute_indicators(y_true, y_pred):
     return [accuracy, precision, recall, f_score, mcc, tn, fp, fn, tp]
 
 
+# Logistic regression: [0.8282079019213929, 0.741652518392756, 0.519730319254412, 0.6111694065524075, 0.5184163742468525, 13457, 913, 2422, 2621]
+# Best params:  {'classifier__C': 10, 'classifier__class_weight': None, 'classifier__max_iter': 100, 'classifier__multi_class': 'ovr', 'classifier__penalty': 'l2', 'classifier__solver': 'lbfgs', 'selector__k': 'all'}
 def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression(n_jobs=-1)
 
@@ -447,6 +451,8 @@ def logistic_regression(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
+# Decision tree: [0.9577602637407923, 0.9245928011260809, 0.9117588736862978, 0.9181309904153355, 0.8897099864788609, 13995, 375, 445, 4598]
+# Best params:  {'max_depth': None, 'max_features': None}
 def decision_tree(x_train, y_train, x_test, y_test):
     decision_tree_model = DecisionTreeClassifier()
     decision_tree_model.fit(x_train, y_train)
@@ -464,7 +470,12 @@ def decision_tree(x_train, y_train, x_test, y_test):
 def random_forest(x_train, y_train, x_test, y_test):
     random_forest_model = RandomForestClassifier(n_jobs=-1)
 
-    parameter_grid = dict(n_estimators=[10, 100], max_features=['sqrt', 'log2', None])
+    # Already tried class_weight = 'balanced' / 'balanced_subsample and None always wins
+    parameter_grid = dict(
+        n_estimators=[10, 100, 1000],
+        max_features=[None, 'sqrt'],
+        class_weight=[None, 'balanced', 'balanced_subsample']
+    )
     grid_search = grid_search_best_parameters(parameter_grid, random_forest_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -513,7 +524,11 @@ def naive_bayes(x_train, y_train, x_test, y_test):
 def svm(x_train, y_train, x_test, y_test):
     svm_model = SVC()
 
-    parameter_grid = dict(kernel=['rbf', 'linear'], C=[0.0001, 0.001, 0.01], probability=[False])
+    parameter_grid = dict(
+        kernel=['rbf', 'linear'],
+        C=[0.0001, 0.001, 0.01],
+        probability=[False]
+    )
     grid_search = grid_search_best_parameters(parameter_grid, svm_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -598,19 +613,34 @@ def bag_of_words(requests, classifier):
 
 
 def voting_ensemble(x_train, y_train, x_test, y_test):
-    models = [('lr', LogisticRegression()), ('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier(max_iter=1000))]
-    voting_model = VotingClassifier(estimators=models, voting='hard', weights=[0.1, 0.7, 0.2], n_jobs=-1)
+    models = [
+        ('lr', LogisticRegression()),
+        ('dt', DecisionTreeClassifier()),
+        ('mlp', MLPClassifier(max_iter=1000))]
+    voting_model = VotingClassifier(estimators=models, n_jobs=-1)
 
-    voting_model.fit(x_train, y_train)
-    y_test_pred = pd.DataFrame(voting_model.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred), voting_model
+    pipeline = Pipeline([
+        ('sel', SelectKBest()),
+        ('vm', voting_model)
+    ])
+
+    parameter_grid = {
+        'sel__k': [5, 10, 'all'],
+        'vm__voting': ['hard', 'soft'],
+        'vm__weights': [[0.1, 0.7, 0.2], [1, 1, 1]]
+    }
+    grid_search = grid_search_best_parameters(parameter_grid, pipeline, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def bagging_knn(x_train, y_train, x_test, y_test):
-    bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=3),
+    bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=3, n_jobs=-1),
                                 bootstrap=False,
                                 n_estimators=10,
-                                max_features=5)
+                                max_features=5,
+                                n_jobs=-1)
 
     bagging.fit(x_train, y_train)
     y_test_pred = pd.DataFrame(bagging.predict(x_test))
@@ -618,16 +648,25 @@ def bagging_knn(x_train, y_train, x_test, y_test):
 
 
 def arbitrary_stack(x_train, y_train, x_test, y_test):
-    models = [('dt', DecisionTreeClassifier()), ('mlp', MLPClassifier(max_iter=1000))]
+    models = [
+        ('dt1', DecisionTreeClassifier(max_features=None, max_depth=None)),
+        ('dt2', DecisionTreeClassifier(max_features=None, max_depth=None)),
+        ('mlp', MLPClassifier(max_iter=1000)),
+        ('knn', KNeighborsClassifier(n_neighbors=3, n_jobs=-1))
+    ]
     stack = StackingClassifier(
         estimators=models,
         final_estimator=None,  # Logistic regression
         n_jobs=-1)
-    stack.fit(x_train, y_train)
-    y_test_pred = pd.DataFrame(stack.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred), stack
+    parameter_grid = dict(
+    )
+    grid_search = grid_search_best_parameters(parameter_grid, stack, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
+# [0.8809045484984289, 0.9859571322985957, 0.5398624038850668, 0.6976987447698745, 0.6756985555201576, 14433, 38, 2274, 2668]
 def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test):
     sorted_features = get_random_forest_feature_importance(x_train, y_train)
 
@@ -644,17 +683,20 @@ def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test
     x_train_third = x_train[third_subset_features]
     x_test_third = x_test[third_subset_features]
 
-    rf = RandomForestClassifier(n_jobs=-1)
+    rf = RandomForestClassifier(n_estimators=1000, n_jobs=-1)
     rf.fit(x_train_first, y_train)
     y_pred_first = rf.predict(x_test_first)
+    print(f'First feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_first)}')
 
     mlp = MLPClassifier(max_iter=1000)
     mlp.fit(x_train_second, y_train)
     y_pred_second = mlp.predict(x_test_second)
+    print(f'Second feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_second)}')
 
-    knn = KNeighborsClassifier(n_neighbors=3)
+    knn = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
     knn.fit(x_train_third, y_train)
     y_pred_third = knn.predict(x_test_third)
+    print(f'Third feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_third)}')
 
     y_pred = [0 if sum(x) <= 1 else 1 for x in zip(y_pred_first, y_pred_second, y_pred_third)]
     return compute_indicators(y_true=y_test, y_pred=y_pred)
@@ -681,6 +723,63 @@ def sgd(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
+# See https://scikit-learn.org/stable/auto_examples/model_selection/plot_learning_curve.html
+def plot_model_performance(estimator, title, X, y, axes=None, ylim=None, cv=None,
+                           n_jobs=None, train_sizes=np.linspace(.1, 1.0, 5)):
+    from sklearn.model_selection import learning_curve
+    if axes is None:
+        _, axes = plt.subplots(1, 3, figsize=(20, 5))
+    axes[0].set_title(title)
+    if ylim is not None:
+        axes[0].set_ylim(*ylim)
+    axes[0].set_xlabel("Number of training examples")
+    axes[0].set_ylabel("Score")
+
+    train_sizes, train_scores, test_scores, fit_times, _ = \
+        learning_curve(estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes, return_times=True)
+
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+    fit_times_mean = np.mean(fit_times, axis=1)
+    fit_times_std = np.std(fit_times, axis=1)
+
+    # Learning curve
+    axes[0].grid()
+    axes[0].fill_between(train_sizes, train_scores_mean - train_scores_std,
+                         train_scores_mean + train_scores_std, alpha=0.1,
+                         color="r")
+    axes[0].fill_between(train_sizes, test_scores_mean - test_scores_std,
+                         test_scores_mean + test_scores_std, alpha=0.1,
+                         color="g")
+    axes[0].plot(train_sizes, train_scores_mean, 'o-', color="r",
+                 label="Training score")
+    axes[0].plot(train_sizes, test_scores_mean, 'o-', color="g",
+                 label="Cross-validation score")
+    axes[0].legend(loc="best")
+
+    # Scalability (number of samples and fit times)
+    axes[1].grid()
+    axes[1].plot(train_sizes, fit_times_mean, 'o-')
+    axes[1].fill_between(train_sizes, fit_times_mean - fit_times_std,
+                         fit_times_mean + fit_times_std, alpha=0.1)
+    axes[1].set_xlabel("Number of training examples")
+    axes[1].set_ylabel("Fit times")
+    axes[1].set_title("Scalability of the model")
+
+    # Performance of the model (Fit times and score)
+    axes[2].grid()
+    axes[2].plot(fit_times_mean, test_scores_mean, 'o-')
+    axes[2].fill_between(fit_times_mean, test_scores_mean - test_scores_std,
+                         test_scores_mean + test_scores_std, alpha=0.1)
+    axes[2].set_xlabel("Fit times")
+    axes[2].set_ylabel("Score")
+    axes[2].set_title("Performance of the model")
+
+    plt.show()
+
+
 def main():
     requests = load_csic()
 
@@ -696,17 +795,12 @@ def main():
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
 
-    # get_random_forest_feature_importance(x_train, y_train)
+    get_random_forest_feature_importance(x_train, y_train)
 
     # Scale the values based on the training data
     scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
-
-    print(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
-    print(voting_ensemble(x_train, y_train, x_test, y_test))
-    print(bagging_knn(x_train, y_train, x_test, y_test))
-    print(arbitrary_stack(x_train, y_train, x_test, y_test))
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
@@ -722,71 +816,78 @@ def main():
     print(f'Logistic regression: {best_logistic_regression_indicators}')
     print("Best params: ", logistic_grid_results.best_params_)
     print()
-    final_logistic_regression = logistic_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("logistic_regression",
-                       create_custom_features_pipeline(scaler=scaler, classifier=final_logistic_regression), x_dataset)
+    plot_model_performance(estimator=logistic_grid_results.best_estimator_, title="Logistic regression",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=logistic_grid_results.cv, n_jobs=-1)
+    create_persisted_model("logistic_regression",
+                           create_custom_features_pipeline(scaler=scaler, classifier=logistic_grid_results.best_estimator_),
+                           x_dataset,
+                           y_dataset)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     print(f'Decision tree: {decision_tree_performance_indicators}')
     print("Best params: ", decision_tree_grid_results.best_params_)
     print()
-    final_decision_tree_classifier = decision_tree_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("decision_tree",
-                       create_custom_features_pipeline(scaler=scaler, classifier=final_decision_tree_classifier),
-                       x_dataset)
+    plot_model_performance(estimator=decision_tree_grid_results.best_estimator_, title="Decision tree",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=decision_tree_grid_results.cv, n_jobs=-1)
+    create_persisted_model("decision_tree", create_custom_features_pipeline(scaler=scaler,
+                                                                            classifier=decision_tree_grid_results.best_estimator_),
+                           x_dataset, y_dataset)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     print(f'Random forest: {random_forest_performance_indicators}')
     print("Best params: ", random_forest_grid_results.best_params_)
     print()
-    final_random_forest_classifier = random_forest_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("random_forest",
-                       create_custom_features_pipeline(scaler=scaler, classifier=final_random_forest_classifier),
-                       x_dataset)
+    plot_model_performance(estimator=random_forest_grid_results.best_estimator_, title="Random forest",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=random_forest_grid_results.cv, n_jobs=-1)
+    create_persisted_model("random_forest",
+                           create_custom_features_pipeline(scaler=scaler,
+                                                           classifier=random_forest_grid_results.best_estimator_),
+                           x_dataset, y_dataset)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     print(f'MLP: {mlp_performance_indicators}')
     print("Best params: ", mlp_grid_results.best_params_)
     print()
-    final_mlp_classifier = mlp_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("mlp", create_custom_features_pipeline(scaler=scaler, classifier=final_mlp_classifier),
-                       x_dataset)
+    plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="Multi layer perceptron",
+                           X=x_dataset, y=y_dataset, ylim=(0.6, 1.01), cv=mlp_grid_results.cv, n_jobs=-1)
+    create_persisted_model("mlp", create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
+                           x_train, y_train)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     print(f'kNN: {knn_performance_indicators}')
     print("Best params: ", knn_grid_results.best_params_)
     print()
-    final_knn_classifier = knn_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("knn", create_custom_features_pipeline(scaler=scaler, classifier=final_knn_classifier),
-                       x_dataset)
+    plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="kNN",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=knn_grid_results.cv, n_jobs=-1)
+    create_persisted_model("knn",
+                           create_custom_features_pipeline(scaler=scaler, classifier=knn_grid_results.best_estimator_),
+                           x_dataset, y_dataset)
 
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
     print(f'sgd: {sgd_performance_indicators}')
     print("Best params: ", sgd_grid_results.best_params_)
     print()
+    plot_model_performance(estimator=sgd_grid_results.best_estimator_,
+                           title="Stochastic gradient descent linear classifier",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=sgd_grid_results.cv, n_jobs=-1)
     final_sgd_classifier = sgd_grid_results.best_estimator_.fit(x_dataset, y_dataset)
-    persist_classifier("sgd", create_custom_features_pipeline(scaler=scaler, classifier=final_sgd_classifier),
-                       x_dataset)
+    create_persisted_model("sgd", create_custom_features_pipeline(scaler=scaler, classifier=final_sgd_classifier),
+                           x_dataset, y_dataset)
 
-    # bayes_performance_indicators = naive_bayes(x_train, y_train, x_test, y_test)
-    # print(f'Naive Bayes: {bayes_performance_indicators}')
-    # print()
-    #
-    # svm_performance_indicators = svm(x_train, y_train, x_test, y_test)
-    # print(f'SVM: {svm_performance_indicators}')
-    # print()
+    print(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
+    print(voting_ensemble(x_train, y_train, x_test, y_test))
+    print(bagging_knn(x_train, y_train, x_test, y_test))
+    print(arbitrary_stack(x_train, y_train, x_test, y_test))
 
-    metrics_headers = ["accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
+    metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
             [
-                best_logistic_regression_indicators,
-                decision_tree_performance_indicators,
-                random_forest_performance_indicators,
-                knn_performance_indicators,
-                mlp_performance_indicators,
-                # bayes_performance_indicators,
-                # svm_performance_indicators,
+                ["lr"] + best_logistic_regression_indicators,
+                ["dt"] + decision_tree_performance_indicators,
+                ["rf"] + random_forest_performance_indicators,
+                ["knn"] + knn_performance_indicators,
+                ["mlp"] + mlp_performance_indicators,
             ]
         ), columns=metrics_headers)
 
@@ -798,7 +899,7 @@ def get_random_forest_feature_importance(x_train, y_train):
     rf.fit(x_train, y_train)
     sorted_features = sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True)
     print(sorted_features)
-    print("Printed feature importances")
+    print("Printed feature importance")
     return sorted_features
 
 
