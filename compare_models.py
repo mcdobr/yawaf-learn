@@ -533,15 +533,20 @@ def naive_bayes(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
-def svm(x_train, y_train, x_test, y_test):
+def linear_svm(x_train, y_train, x_test, y_test):
     svm_model = SVC()
 
-    parameter_grid = dict(
-        kernel=['rbf', 'linear'],
+    initial_parameter_grid = dict(
+        kernel=['linear'],
         C=[0.0001, 0.001, 0.01],
         probability=[False]
     )
-    grid_search = grid_search_best_parameters(parameter_grid, svm_model, x_train, y_train)
+    best_parameter_grid = dict(
+        kernel=['linear'],
+        C=[0.01],
+        probability=[False]
+    )
+    grid_search = grid_search_best_parameters(best_parameter_grid, svm_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -700,7 +705,6 @@ def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test
     y_pred_first = rf.predict(x_test_first)
     logging.info("First feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_first))
 
-
     mlp = MLPClassifier(max_iter=1000)
     mlp.fit(x_train_second, y_train)
     y_pred_second = mlp.predict(x_test_second)
@@ -845,6 +849,17 @@ def main():
                            x_dataset,
                            y_dataset)
 
+    best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
+    logging.info("Linear SVM: {}".format(best_linear_svm_indicators))
+    logging.info("Best params: {}".format(linear_svm_grid_results.best_params_))
+    plot_model_performance(estimator=linear_svm_grid_results.best_estimator_, title="Linear SVM",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=linear_svm_grid_results.cv, n_jobs=-1)
+    create_persisted_model("linear_svm",
+                           create_custom_features_pipeline(scaler=scaler,
+                                                           classifier=linear_svm_grid_results.best_estimator_),
+                           x_dataset,
+                           y_dataset)
+
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     logging.info("Decision tree: {}".format(decision_tree_performance_indicators))
     logging.info("Best params: {}".format(decision_tree_grid_results.best_params_))
@@ -915,6 +930,7 @@ def main():
     metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
     logging.info("Wrote values to CSV file")
     logging.info("Ended analysis...")
+
 
 def get_random_forest_feature_importance(x_train, y_train):
     rf = RandomForestClassifier()
