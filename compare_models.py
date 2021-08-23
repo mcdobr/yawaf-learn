@@ -666,10 +666,9 @@ def bagging_knn(x_train, y_train, x_test, y_test):
 
 def arbitrary_stack(x_train, y_train, x_test, y_test):
     models = [
-        ('dt1', DecisionTreeClassifier(max_features=None, max_depth=None)),
-        ('dt2', DecisionTreeClassifier(max_features=None, max_depth=None)),
+        ('dt', DecisionTreeClassifier(max_features=None, max_depth=None)),
         ('mlp', MLPClassifier(max_iter=1000)),
-        ('knn', KNeighborsClassifier(n_neighbors=3, n_jobs=-1))
+        ('knn', KNeighborsClassifier(n_neighbors=5, n_jobs=-1))
     ]
     stack = StackingClassifier(
         estimators=models,
@@ -849,6 +848,17 @@ def main():
                            x_dataset,
                            y_dataset)
 
+    voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
+    logging.info("Voting ensemble: {}".format(voting_ensemble_indicators))
+    logging.info("Best params: {}".format(voting_ensemble_grid_results.best_params_))
+    plot_model_performance(estimator=voting_ensemble_grid_results.best_estimator_, title="Voting ensemble",
+                           X=x_train, y=y_train, ylim=(0.6, 1.01), cv=voting_ensemble_grid_results.cv, n_jobs=-1)
+    create_persisted_model("voting_ensemble",
+                           create_custom_features_pipeline(scaler=scaler,
+                                                           classifier=voting_ensemble_grid_results.best_estimator_),
+                           x_dataset,
+                           y_dataset)
+
     best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
     logging.info("Linear SVM: {}".format(best_linear_svm_indicators))
     logging.info("Best params: {}".format(linear_svm_grid_results.best_params_))
@@ -899,8 +909,8 @@ def main():
                            x_dataset, y_dataset)
 
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
-    logging.info("SGD classifier: ".format(sgd_performance_indicators))
-    logging.info("Best params: ".format(sgd_grid_results.best_params_))
+    logging.info("SGD classifier: {}".format(sgd_performance_indicators))
+    logging.info("Best params: {}".format(sgd_grid_results.best_params_))
 
     plot_model_performance(estimator=sgd_grid_results.best_estimator_,
                            title="Stochastic gradient descent linear classifier",
@@ -910,9 +920,11 @@ def main():
                            x_dataset, y_dataset)
 
     logging.info(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
-    logging.info(voting_ensemble(x_train, y_train, x_test, y_test))
     logging.info(bagging_knn(x_train, y_train, x_test, y_test))
-    logging.info(arbitrary_stack(x_train, y_train, x_test, y_test))
+
+    ## Todo: extract this
+    stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
+    logging.info(stack_perf_indicators)
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
@@ -924,6 +936,8 @@ def main():
                 ["rf"] + random_forest_performance_indicators,
                 ["knn"] + knn_performance_indicators,
                 ["mlp"] + mlp_performance_indicators,
+                ["lr_dt_mlp_voting"] + voting_ensemble_indicators,
+                ["dt_mlp_knn_stacked"] + arbitrary_stack()
             ]
         ), columns=metrics_headers)
 
