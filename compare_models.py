@@ -8,7 +8,9 @@ import collections
 import csv
 import datetime
 import re
+import sys
 import urllib.parse
+import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -457,11 +459,15 @@ def decision_tree(x_train, y_train, x_test, y_test):
     decision_tree_model = DecisionTreeClassifier()
     decision_tree_model.fit(x_train, y_train)
 
-    parameter_grid = dict(
+    initial_parameter_grid = dict(
         max_depth=[None, 3],
         max_features=['sqrt', None],
     )
-    grid_search = grid_search_best_parameters(parameter_grid, decision_tree_model, x_train, y_train)
+    best_parameter_grid = dict(
+        max_depth=[None],
+        max_features=[None],
+    )
+    grid_search = grid_search_best_parameters(best_parameter_grid, decision_tree_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -471,12 +477,18 @@ def random_forest(x_train, y_train, x_test, y_test):
     random_forest_model = RandomForestClassifier(n_jobs=-1)
 
     # Already tried class_weight = 'balanced' / 'balanced_subsample and None always wins
-    parameter_grid = dict(
+    initial_parameter_grid = dict(
         n_estimators=[10, 100, 1000],
         max_features=[None, 'sqrt'],
         class_weight=[None, 'balanced', 'balanced_subsample']
     )
-    grid_search = grid_search_best_parameters(parameter_grid, random_forest_model, x_train, y_train)
+    best_parameter_grid = initial_parameter_grid = dict(
+        n_estimators=[1000],
+        max_features=[None],
+        class_weight=[None]
+    )
+
+    grid_search = grid_search_best_parameters(best_parameter_grid, random_forest_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -486,7 +498,7 @@ def knn(x_train, y_train, x_test, y_test):
     knn_model = KNeighborsClassifier(n_jobs=-1)
     knn_model.fit(x_train, y_train)
 
-    parameter_grid = dict(n_neighbors=[1, 3, 5], weights=['uniform', 'distance'])
+    parameter_grid = dict(n_neighbors=[3, 5], weights=['uniform', 'distance'])
     grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -608,7 +620,7 @@ def bag_of_words(requests, classifier):
     # x_test_numerical = text_classifier.named_steps['tfidf'].transform(x_test)
     # pca(x_train_numerical, y_train, x_test_numerical, y_test)
     from sklearn.metrics import classification_report
-    print(classification_report(y_true=y_test, y_pred=y_pred, digits=4))
+    logging.info(classification_report(y_true=y_test, y_pred=y_pred, digits=4))
     return text_classifier
 
 
@@ -686,17 +698,18 @@ def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test
     rf = RandomForestClassifier(n_estimators=1000, n_jobs=-1)
     rf.fit(x_train_first, y_train)
     y_pred_first = rf.predict(x_test_first)
-    print(f'First feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_first)}')
+    logging.info("First feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_first))
+
 
     mlp = MLPClassifier(max_iter=1000)
     mlp.fit(x_train_second, y_train)
     y_pred_second = mlp.predict(x_test_second)
-    print(f'Second feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_second)}')
+    logging.info("Second feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_second))
 
     knn = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
     knn.fit(x_train_third, y_train)
     y_pred_third = knn.predict(x_test_third)
-    print(f'Third feature subset: {compute_indicators(y_true=y_test, y_pred=y_pred_third)}')
+    logging.info("Third feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_third))
 
     y_pred = [0 if sum(x) <= 1 else 1 for x in zip(y_pred_first, y_pred_second, y_pred_third)]
     return compute_indicators(y_true=y_test, y_pred=y_pred)
@@ -781,6 +794,16 @@ def plot_model_performance(estimator, title, X, y, axes=None, ylim=None, cv=None
 
 
 def main():
+    logging.basicConfig(
+        format="%(asctime)s [%(levelname)s] %(funcName)s:  %(message)s",
+        level=logging.INFO,
+        handlers=[
+            logging.FileHandler("learn.log"),
+            logging.StreamHandler(sys.stdout),
+        ]
+    )
+
+    logging.info("Starting analysis...")
     requests = load_csic()
 
     # tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
@@ -809,24 +832,22 @@ def main():
     y_dataset = pd.concat([y_train, y_test])
 
     baseline_results = dummy_baseline(x_train, y_train, x_test, y_test)
-    print(f'Baseline results: {baseline_results}')
-    print()
+    logging.info("Baseline results: {}".format(baseline_results))
 
     best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
-    print(f'Logistic regression: {best_logistic_regression_indicators}')
-    print("Best params: ", logistic_grid_results.best_params_)
-    print()
+    logging.info("Logistic regression: {}".format(best_logistic_regression_indicators))
+    logging.info("Best params: {}".format(logistic_grid_results.best_params_))
     plot_model_performance(estimator=logistic_grid_results.best_estimator_, title="Logistic regression",
                            X=x_train, y=y_train, ylim=(0.6, 1.01), cv=logistic_grid_results.cv, n_jobs=-1)
     create_persisted_model("logistic_regression",
-                           create_custom_features_pipeline(scaler=scaler, classifier=logistic_grid_results.best_estimator_),
+                           create_custom_features_pipeline(scaler=scaler,
+                                                           classifier=logistic_grid_results.best_estimator_),
                            x_dataset,
                            y_dataset)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
-    print(f'Decision tree: {decision_tree_performance_indicators}')
-    print("Best params: ", decision_tree_grid_results.best_params_)
-    print()
+    logging.info("Decision tree: {}".format(decision_tree_performance_indicators))
+    logging.info("Best params: {}".format(decision_tree_grid_results.best_params_))
     plot_model_performance(estimator=decision_tree_grid_results.best_estimator_, title="Decision tree",
                            X=x_train, y=y_train, ylim=(0.6, 1.01), cv=decision_tree_grid_results.cv, n_jobs=-1)
     create_persisted_model("decision_tree", create_custom_features_pipeline(scaler=scaler,
@@ -834,9 +855,8 @@ def main():
                            x_dataset, y_dataset)
 
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
-    print(f'Random forest: {random_forest_performance_indicators}')
-    print("Best params: ", random_forest_grid_results.best_params_)
-    print()
+    logging.info("Random forest: {}".format(random_forest_performance_indicators))
+    logging.info("Best params: {}".format(random_forest_grid_results.best_params_))
     plot_model_performance(estimator=random_forest_grid_results.best_estimator_, title="Random forest",
                            X=x_train, y=y_train, ylim=(0.6, 1.01), cv=random_forest_grid_results.cv, n_jobs=-1)
     create_persisted_model("random_forest",
@@ -845,18 +865,18 @@ def main():
                            x_dataset, y_dataset)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
-    print(f'MLP: {mlp_performance_indicators}')
-    print("Best params: ", mlp_grid_results.best_params_)
-    print()
+    logging.info("MLP: {}".format(mlp_performance_indicators))
+    logging.info("Best params: {}".format(mlp_grid_results.best_params_))
     plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="Multi layer perceptron",
                            X=x_dataset, y=y_dataset, ylim=(0.6, 1.01), cv=mlp_grid_results.cv, n_jobs=-1)
-    create_persisted_model("mlp", create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
+    create_persisted_model("mlp",
+                           create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
                            x_train, y_train)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
-    print(f'kNN: {knn_performance_indicators}')
-    print("Best params: ", knn_grid_results.best_params_)
-    print()
+    logging.info("kNN: {}".format(knn_performance_indicators))
+    logging.info("Best params: {}".format(knn_grid_results.best_params_))
+
     plot_model_performance(estimator=mlp_grid_results.best_estimator_, title="kNN",
                            X=x_train, y=y_train, ylim=(0.6, 1.01), cv=knn_grid_results.cv, n_jobs=-1)
     create_persisted_model("knn",
@@ -864,9 +884,9 @@ def main():
                            x_dataset, y_dataset)
 
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
-    print(f'sgd: {sgd_performance_indicators}')
-    print("Best params: ", sgd_grid_results.best_params_)
-    print()
+    logging.info("SGD classifier: ".format(sgd_performance_indicators))
+    logging.info("Best params: ".format(sgd_grid_results.best_params_))
+
     plot_model_performance(estimator=sgd_grid_results.best_estimator_,
                            title="Stochastic gradient descent linear classifier",
                            X=x_train, y=y_train, ylim=(0.6, 1.01), cv=sgd_grid_results.cv, n_jobs=-1)
@@ -874,11 +894,12 @@ def main():
     create_persisted_model("sgd", create_custom_features_pipeline(scaler=scaler, classifier=final_sgd_classifier),
                            x_dataset, y_dataset)
 
-    print(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
-    print(voting_ensemble(x_train, y_train, x_test, y_test))
-    print(bagging_knn(x_train, y_train, x_test, y_test))
-    print(arbitrary_stack(x_train, y_train, x_test, y_test))
+    logging.info(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
+    logging.info(voting_ensemble(x_train, y_train, x_test, y_test))
+    logging.info(bagging_knn(x_train, y_train, x_test, y_test))
+    logging.info(arbitrary_stack(x_train, y_train, x_test, y_test))
 
+    logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
@@ -892,14 +913,15 @@ def main():
         ), columns=metrics_headers)
 
     metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
-
+    logging.info("Wrote values to CSV file")
+    logging.info("Ended analysis...")
 
 def get_random_forest_feature_importance(x_train, y_train):
     rf = RandomForestClassifier()
     rf.fit(x_train, y_train)
     sorted_features = sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True)
-    print(sorted_features)
-    print("Printed feature importance")
+    logging.info(sorted_features)
+    logging.info("Computed feature importance")
     return sorted_features
 
 
@@ -918,7 +940,7 @@ def plot_heatmap(df):
                 square=True, annot=True, linewidths=.5, cbar_kws={"shrink": .5})
 
     plt.show()
-    print("Plotted heatmap")
+    logging.info("Plotted heatmap")
 
 
 if __name__ == "__main__":
