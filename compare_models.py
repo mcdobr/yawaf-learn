@@ -318,7 +318,7 @@ def create_persisted_model(name, pipeline, x, y):
     from onnxconverter_common import StringTensorType
 
     # ZipMap not supported by tract so this would enable at least a few models to be used
-
+    pipeline.named_steps['classifier'].fit(x, y)
     options = {id(pipeline.named_steps['classifier']): {'zipmap': False}}
 
     if isinstance(x, list) and isinstance(x[0], dict):
