@@ -423,7 +423,8 @@ def compute_indicators(y_true, y_pred):
     )
     mcc = matthews_corrcoef(y_true=y_true, y_pred=y_pred)
     tn, fp, fn, tp = confusion_matrix(y_true=y_true, y_pred=y_pred).ravel()
-    return [accuracy, precision, recall, f_score, mcc, tn, fp, fn, tp]
+    fpr = fp / (fp + tn)
+    return [accuracy, precision, recall, f_score, mcc, fpr, tn, fp, fn, tp]
 
 
 # Logistic regression: [0.8282079019213929, 0.741652518392756, 0.519730319254412, 0.6111694065524075, 0.5184163742468525, 13457, 913, 2422, 2621]
@@ -928,7 +929,7 @@ def main():
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
 
     logging.info("Writing values to CSV file")
-    metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "tn", "fp", "fn", "tp"]
+    metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "fpr", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
             [
