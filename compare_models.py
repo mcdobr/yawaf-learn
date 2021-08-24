@@ -31,7 +31,6 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 NORMAL_LABEL = 0
@@ -418,8 +417,7 @@ def compute_indicators(y_true, y_pred):
     precision, recall, f_score, support = precision_recall_fscore_support(
         y_true=y_true,
         y_pred=y_pred,
-        average='binary',
-        pos_label=ANOMALOUS_LABEL
+        average='weighted',
     )
     mcc = matthews_corrcoef(y_true=y_true, y_pred=y_pred)
     tn, fp, fn, tp = confusion_matrix(y_true=y_true, y_pred=y_pred).ravel()
@@ -490,7 +488,19 @@ def random_forest(x_train, y_train, x_test, y_test):
     )
 
     grid_search = grid_search_best_parameters(best_parameter_grid, random_forest_model, x_train, y_train)
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
+
+def extra_trees(x_train, y_train, x_test, y_test):
+    from sklearn.ensemble import ExtraTreesClassifier
+    extra_forest = ExtraTreesClassifier()
+
+    best_parameter_grid = {
+        'n_estimators': [1000]
+    }
+
+    grid_search = grid_search_best_parameters(best_parameter_grid, extra_forest, x_train, y_train)
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
@@ -903,6 +913,10 @@ def main():
                                                            classifier=random_forest_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
+    extra_trees_performance_indicators, extra_trees_grid = random_forest(x_train, y_train, x_test, y_test)
+    save_test_performance("Extra trees", extra_trees_grid, extra_trees_performance_indicators, x_train,
+                          y_train)
+
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     save_test_performance("Multi layer perceptron", mlp_grid_results, mlp_performance_indicators, x_train, y_train)
     create_persisted_model("mlp",
@@ -929,13 +943,16 @@ def main():
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
 
     logging.info("Writing values to CSV file")
-    metrics_headers = ["name", "accuracy", "precision", "recall", "f_score", "mcc", "fpr", "tn", "fp", "fn", "tp"]
+    metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr", "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
             [
                 ["lr"] + best_logistic_regression_indicators,
+                ["lin_svm"] + best_linear_svm_indicators,
+                ["lin_svm_kernel_approx"] + best_linear_svm_with_kernel_approximation_indicators,
                 ["dt"] + decision_tree_performance_indicators,
                 ["rf"] + random_forest_performance_indicators,
+                ["et"] + extra_trees_performance_indicators,
                 ["knn"] + knn_performance_indicators,
                 ["mlp"] + mlp_performance_indicators,
                 ["lr_dt_mlp_voting"] + voting_ensemble_indicators,
