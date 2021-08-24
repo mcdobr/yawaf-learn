@@ -534,19 +534,39 @@ def naive_bayes(x_train, y_train, x_test, y_test):
 
 
 def linear_svm(x_train, y_train, x_test, y_test):
-    svm_model = SVC()
+    from sklearn.svm import LinearSVC
+    svm_model = LinearSVC()
 
     initial_parameter_grid = dict(
-        kernel=['linear'],
-        C=[0.0001, 0.001, 0.01],
-        probability=[False]
+        C=[0.0001, 0.001, 0.01, 0.1, 1.0],
+        max_iter=[20000],
     )
     best_parameter_grid = dict(
-        kernel=['linear'],
-        C=[0.01],
-        probability=[False]
+        C=[1.0],
+        max_iter=[20000]
     )
     grid_search = grid_search_best_parameters(best_parameter_grid, svm_model, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
+
+
+def linear_svm_with_kernel_approximation(x_train, y_train, x_test, y_test):
+    from sklearn.svm import LinearSVC
+    from sklearn.kernel_approximation import Nystroem
+    pipeline = Pipeline(
+        [
+            ("kernel_sampler", Nystroem()),
+            ("classifier", LinearSVC())
+        ]
+    )
+    initial_parameter_grid = {
+        'kernel_sampler__n_components': [100, 200, 300, 400, 500],
+    }
+    best_parameter_grid = {
+        'kernel_sampler__n_components': [300]
+    }
+    grid_search = grid_search_best_parameters(best_parameter_grid, pipeline, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -835,6 +855,8 @@ def main():
     x_dataset = pd.concat([x_train, x_test])
     y_dataset = pd.concat([y_train, y_test])
 
+    logging.info("Dataset description {}".format(x_dataset.describe()))
+
     baseline_results = dummy_baseline(x_train, y_train, x_test, y_test)
     logging.info("Baseline results: {}".format(baseline_results))
 
@@ -847,20 +869,21 @@ def main():
                            x_dataset,
                            y_dataset)
 
+    best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
+    save_test_performance("Linear SVM", linear_svm_grid_results, best_linear_svm_indicators, x_train, y_train)
+
+    best_linear_svm_with_kernel_approximation_indicators, best_linear_svm_with_kernel_approximation_grid_results = linear_svm_with_kernel_approximation(
+        x_train, y_train, x_test, y_test)
+    save_test_performance("Linear SVM with kernel approximation",
+                          best_linear_svm_with_kernel_approximation_grid_results,
+                          best_linear_svm_with_kernel_approximation_indicators, x_train, y_train)
+
     voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_grid_results, x_train,
                           y_train)
     create_persisted_model("voting_ensemble",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=voting_ensemble_grid_results.best_estimator_),
-                           x_dataset,
-                           y_dataset)
-
-    best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
-    save_test_performance("Linear SVM", linear_svm_grid_results, best_linear_svm_indicators, x_train, y_train)
-    create_persisted_model("linear_svm",
-                           create_custom_features_pipeline(scaler=scaler,
-                                                           classifier=linear_svm_grid_results.best_estimator_),
                            x_dataset,
                            y_dataset)
 
