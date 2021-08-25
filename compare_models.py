@@ -607,9 +607,15 @@ def pca(x_train, y_train, x_test, y_test):
     on the training data, and use that fitted PCA on the test data to avoid introducing bias.
     """
     scaled_points = pd.concat([x_train, x_test])
-    targets = pd.concat([y_train, y_test])
+    labels = pd.concat([y_train, y_test])
     pca_transform = PCA(n_components=2)
     transformed_points = pca_transform.fit_transform(scaled_points)
+    # label_colors = ['red' if label == 0 else 'blue' for label in labels]
+
+    labeled_points = list(zip(transformed_points, labels))
+    normal_points = np.array([labeled_point[0] for labeled_point in labeled_points if labeled_point[1] == NORMAL_LABEL])
+    anomaly_points = np.array(
+        [labeled_point[0] for labeled_point in labeled_points if labeled_point[1] == ANOMALOUS_LABEL])
 
     print(normal_points)
     fig, axes = plt.subplots()
@@ -631,9 +637,10 @@ def pca(x_train, y_train, x_test, y_test):
     )
 
     axes.legend()
-    # pyplot.xlabel("PC1")
-    # pyplot.ylabel("PC2")
-    pyplot.show()
+
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.show()
 
 
 def preprocess_http_request_for_vectorization(raw_requests):
@@ -845,6 +852,22 @@ def plot_model_cv_performance(estimator, title, X, y, axes=None, ylim=None, cv=N
     plt.show()
 
 
+def gradient_boosting(x_train, y_train, x_test, y_test):
+    from sklearn.ensemble import GradientBoostingClassifier
+    classifier = GradientBoostingClassifier()
+
+    initial_parameter_grid = dict(
+        n_estimators=[100, 1000]
+    )
+    best_parameter_grid = dict(
+        n_estimators=[1000]
+    )
+
+    grid_search = grid_search_best_parameters(best_parameter_grid, classifier, x_train, y_train)
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
+
+
 def main():
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(funcName)s:  %(message)s",
@@ -879,7 +902,7 @@ def main():
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
-    # pca(x_train, y_train, x_test, y_test)
+    pca(x_train, y_train, x_test, y_test)
 
     x_dataset = pd.concat([x_train, x_test])
     y_dataset = pd.concat([y_train, y_test])
@@ -945,8 +968,10 @@ def main():
                            create_custom_features_pipeline(scaler=scaler, classifier=sgd_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
-    disjoint_subspace_voting_perf_results = arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test)
-    save_test_performance("Disjoint subspace voting ensemble (kNN, RF, MLP)", None, disjoint_subspace_voting_perf_results, x_train, y_train)
+    disjoint_subspace_voting_perf_results = arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test,
+                                                                                        y_test)
+    save_test_performance("Disjoint subspace voting ensemble (kNN, RF, MLP)", None,
+                          disjoint_subspace_voting_perf_results, x_train, y_train)
 
     bagging_knn_perf_indicators, bagging_knn_grid_results = bagging_knn(x_train, y_train, x_test, y_test)
     save_test_performance("Bagging kNN (k=1)", bagging_knn_grid_results, bagging_knn_perf_indicators, x_train, y_train)
@@ -958,8 +983,13 @@ def main():
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
 
+    gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test, y_test)
+    save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators, x_train,
+                          y_train)
+
     logging.info("Writing values to CSV file")
-    metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr", "tn", "fp", "fn", "tp"]
+    metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
+                       "tn", "fp", "fn", "tp"]
     metrics_df = pd.DataFrame(
         np.array(
             [
@@ -973,6 +1003,7 @@ def main():
                 ["mlp"] + mlp_performance_indicators,
                 ["lr_dt_mlp_voting"] + voting_ensemble_indicators,
                 ["dt_mlp_knn_stacked"] + stack_perf_indicators,
+                ["gradient_boosting"] + gradient_boosting_perf_indicators,
             ]
         ), columns=metrics_headers)
 
