@@ -481,7 +481,7 @@ def random_forest(x_train, y_train, x_test, y_test):
         max_features=[None, 'sqrt'],
         class_weight=[None, 'balanced', 'balanced_subsample']
     )
-    best_parameter_grid = initial_parameter_grid = dict(
+    best_parameter_grid = dict(
         n_estimators=[1000],
         max_features=[None],
         class_weight=[None]
@@ -656,7 +656,7 @@ def bag_of_words(requests, classifier):
     # x_test_numerical = text_classifier.named_steps['tfidf'].transform(x_test)
     # pca(x_train_numerical, y_train, x_test_numerical, y_test)
     from sklearn.metrics import classification_report
-    logging.info(classification_report(y_true=y_test, y_pred=y_pred, digits=4))
+    logging.info("Classification report: {}".format(classification_report(y_true=y_test, y_pred=y_pred, digits=4)))
     return text_classifier
 
 
@@ -684,15 +684,16 @@ def voting_ensemble(x_train, y_train, x_test, y_test):
 
 
 def bagging_knn(x_train, y_train, x_test, y_test):
-    bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=3, n_jobs=-1),
+    bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=1, n_jobs=-1),
                                 bootstrap=False,
                                 n_estimators=10,
                                 max_features=5,
                                 n_jobs=-1)
 
-    bagging.fit(x_train, y_train)
-    y_test_pred = pd.DataFrame(bagging.predict(x_test))
-    return compute_indicators(y_true=y_test, y_pred=y_test_pred), bagging
+    parameter_grid = {}
+    grid_search = grid_search_best_parameters(parameter_grid, bagging, x_train, y_train)
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
 def arbitrary_stack(x_train, y_train, x_test, y_test):
@@ -730,20 +731,20 @@ def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test
     x_train_third = x_train[third_subset_features]
     x_test_third = x_test[third_subset_features]
 
-    rf = RandomForestClassifier(n_estimators=1000, n_jobs=-1)
+    rf = RandomForestClassifier(n_jobs=-1)
     rf.fit(x_train_first, y_train)
     y_pred_first = rf.predict(x_test_first)
-    logging.info("First feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_first))
+    logging.info("First feature subset: {}".format(compute_indicators(y_true=y_test, y_pred=y_pred_first)))
 
     mlp = MLPClassifier(max_iter=1000)
     mlp.fit(x_train_second, y_train)
     y_pred_second = mlp.predict(x_test_second)
-    logging.info("Second feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_second))
+    logging.info("Second feature subset: {}".format(compute_indicators(y_true=y_test, y_pred=y_pred_second)))
 
     knn = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
     knn.fit(x_train_third, y_train)
     y_pred_third = knn.predict(x_test_third)
-    logging.info("Third feature subset: ", compute_indicators(y_true=y_test, y_pred=y_pred_third))
+    logging.info("Third feature subset: {}".format(compute_indicators(y_true=y_test, y_pred=y_pred_third)))
 
     y_pred = [0 if sum(x) <= 1 else 1 for x in zip(y_pred_first, y_pred_second, y_pred_third)]
     return compute_indicators(y_true=y_test, y_pred=y_pred)
@@ -889,15 +890,6 @@ def main():
                           best_linear_svm_with_kernel_approximation_grid_results,
                           best_linear_svm_with_kernel_approximation_indicators, x_train, y_train)
 
-    voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
-    save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_grid_results, x_train,
-                          y_train)
-    create_persisted_model("voting_ensemble",
-                           create_custom_features_pipeline(scaler=scaler,
-                                                           classifier=voting_ensemble_grid_results.best_estimator_),
-                           x_dataset,
-                           y_dataset)
-
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     save_test_performance("Decision Tree", decision_tree_grid_results, decision_tree_performance_indicators, x_train,
                           y_train)
@@ -936,8 +928,15 @@ def main():
                            create_custom_features_pipeline(scaler=scaler, classifier=sgd_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
-    logging.info(arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test))
-    logging.info(bagging_knn(x_train, y_train, x_test, y_test))
+    disjoint_subspace_voting_perf_results = arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test)
+    save_test_performance("Disjoint subspace voting ensemble (kNN, RF, MLP)", None, disjoint_subspace_voting_perf_results, x_train, y_train)
+
+    bagging_knn_perf_indicators, bagging_knn_grid_results = bagging_knn(x_train, y_train, x_test, y_test)
+    save_test_performance("Bagging kNN (k=1)", bagging_knn_grid_results, bagging_knn_perf_indicators, x_train, y_train)
+
+    voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
+    save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_indicators, x_train,
+                          y_train)
 
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
@@ -967,17 +966,17 @@ def main():
 
 def save_test_performance(name, grid_results, performance_indicators, x_train, y_train):
     logging.info("{} performance indicators: {}".format(name, performance_indicators))
-    logging.info("Best params: {}".format(grid_results.best_params_))
-    plot_model_cv_performance(estimator=grid_results.best_estimator_, title=name,
-                              X=x_train, y=y_train, ylim=(0.6, 1.01), cv=grid_results.cv, n_jobs=-1)
+    if grid_results is not None:
+        logging.info("Best params: {}".format(grid_results.best_params_))
+        plot_model_cv_performance(estimator=grid_results.best_estimator_, title=name,
+                                  X=x_train, y=y_train, ylim=(0.6, 1.01), cv=grid_results.cv, n_jobs=-1)
 
 
 def get_random_forest_feature_importance(x_train, y_train):
     rf = RandomForestClassifier()
     rf.fit(x_train, y_train)
     sorted_features = sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True)
-    logging.info(sorted_features)
-    logging.info("Computed feature importance")
+    logging.info("Sorted features by random forest importance: {}".format(sorted_features))
     return sorted_features
 
 
