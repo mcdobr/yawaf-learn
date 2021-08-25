@@ -611,8 +611,25 @@ def pca(x_train, y_train, x_test, y_test):
     pca_transform = PCA(n_components=2)
     transformed_points = pca_transform.fit_transform(scaled_points)
 
-    fig, axes = pyplot.subplots()
-    axes.scatter(x=transformed_points[:, 0], y=transformed_points[:, 1], c=targets)
+    print(normal_points)
+    fig, axes = plt.subplots()
+    axes.scatter(
+        x=anomaly_points[:, 0],
+        y=anomaly_points[:, 1],
+        c=['red'],
+        label='Anomaly',
+        edgecolors='black',
+        linewidths=1,
+    )
+    axes.scatter(
+        x=normal_points[:, 0],
+        y=normal_points[:, 1],
+        c=['blue'],
+        label='Normal',
+        edgecolors='black',
+        linewidths=1,
+    )
+
     axes.legend()
     # pyplot.xlabel("PC1")
     # pyplot.ylabel("PC2")
