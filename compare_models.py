@@ -398,7 +398,7 @@ def load_csic():
 
 
 def grid_search_best_parameters(parameter_grid, estimator_model, x, y):
-    cross_validator = RepeatedStratifiedKFold(n_splits=2, n_repeats=3)
+    cross_validator = RepeatedStratifiedKFold(n_splits=5, n_repeats=1)
     grid_search = GridSearchCV(
         estimator=estimator_model,
         param_grid=parameter_grid,
@@ -431,11 +431,19 @@ def logistic_regression(x_train, y_train, x_test, y_test):
     logistic_model = LogisticRegression(n_jobs=-1)
 
     # Grid search for best parameters
-    c_values = [10, 1.0, 0.1]
     parameter_grid = {
         'selector__k': [3, 5, 10, 'all'],
         'classifier__penalty': ['l2'],
-        'classifier__C': c_values,
+        'classifier__C': [10, 1.0, 0.1, 0.1, 0.01, 0.001],
+        'classifier__solver': ['lbfgs'],
+        'classifier__max_iter': [100],
+        'classifier__multi_class': ['ovr'],
+        'classifier__class_weight': [None, 'balanced']
+    }
+    best_parameter_grid = {
+        'selector__k': [3, 5, 10, 'all'],
+        'classifier__penalty': ['l2'],
+        'classifier__C': [10],
         'classifier__solver': ['lbfgs'],
         'classifier__max_iter': [100],
         'classifier__multi_class': ['ovr'],
@@ -446,7 +454,7 @@ def logistic_regression(x_train, y_train, x_test, y_test):
         ('selector', SelectKBest(score_func=f_classif)),
         ('classifier', logistic_model)
     ])
-    grid_search = grid_search_best_parameters(parameter_grid, logistic_pipeline, x_train, y_train)
+    grid_search = grid_search_best_parameters(best_parameter_grid, logistic_pipeline, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -509,7 +517,7 @@ def knn(x_train, y_train, x_test, y_test):
     knn_model = KNeighborsClassifier(n_jobs=-1)
     knn_model.fit(x_train, y_train)
 
-    parameter_grid = dict(n_neighbors=[3, 5], weights=['uniform', 'distance'])
+    parameter_grid = dict(n_neighbors=[1, 3, 5], weights=['uniform', 'distance'])
     grid_search = grid_search_best_parameters(parameter_grid, knn_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
@@ -549,7 +557,7 @@ def linear_svm(x_train, y_train, x_test, y_test):
     svm_model = LinearSVC()
 
     initial_parameter_grid = dict(
-        C=[0.0001, 0.001, 0.01, 0.1, 1.0],
+        C=[0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
         max_iter=[20000],
     )
     best_parameter_grid = dict(
@@ -707,6 +715,30 @@ def voting_ensemble(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
+def voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test):
+    pipeline = Pipeline([
+        Pipeline([
+            ('sel_dt', SelectKBest(k=5)),
+            ('dt', DecisionTreeClassifier()),
+        ]),
+        Pipeline([
+            ('sel_mlp', SelectKBest(k=10)),
+            ('mlp', MLPClassifier(max_iter=1000)),
+        ]),
+        Pipeline([
+            ('sel_knn', SelectKBest(k='all')),
+            ('knn', KNeighborsClassifier(n_neighbors=3)),
+        ]),
+    ])
+
+    parameter_grid = {
+    }
+    grid_search = grid_search_best_parameters(parameter_grid, pipeline, x_train, y_train)
+
+    y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
+    return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
+
+
 def bagging_knn(x_train, y_train, x_test, y_test):
     bagging = BaggingClassifier(base_estimator=KNeighborsClassifier(n_neighbors=1, n_jobs=-1),
                                 bootstrap=False,
@@ -755,7 +787,7 @@ def arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test, y_test
     x_train_third = x_train[third_subset_features]
     x_test_third = x_test[third_subset_features]
 
-    rf = RandomForestClassifier(n_jobs=-1)
+    rf = DecisionTreeClassifier()
     rf.fit(x_train_first, y_train)
     y_pred_first = rf.predict(x_test_first)
     logging.info("First feature subset: {}".format(compute_indicators(y_true=y_test, y_pred=y_pred_first)))
@@ -893,7 +925,7 @@ def main():
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
 
-    get_random_forest_feature_importance(x_train, y_train)
+    # get_random_forest_feature_importance(x_train, y_train)
 
     # Scale the values based on the training data
     # todo: maybe put the scaler in individual pipelines?
@@ -902,7 +934,7 @@ def main():
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
 
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
-    pca(x_train, y_train, x_test, y_test)
+    # pca(x_train, y_train, x_test, y_test)
 
     x_dataset = pd.concat([x_train, x_test])
     y_dataset = pd.concat([y_train, y_test])
@@ -983,9 +1015,16 @@ def main():
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
 
-    gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test, y_test)
-    save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators, x_train,
+    gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test,
+                                                                                          y_test)
+    save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators,
+                          x_train,
                           y_train)
+
+    voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
+    save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results, voting_ensemble_overlapping_indicators, x_train,
+                          y_train)
+
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
@@ -1004,6 +1043,8 @@ def main():
                 ["lr_dt_mlp_voting"] + voting_ensemble_indicators,
                 ["dt_mlp_knn_stacked"] + stack_perf_indicators,
                 ["gradient_boosting"] + gradient_boosting_perf_indicators,
+                ["arbitrary_disjoint"] + disjoint_subspace_voting_perf_results,
+                ["voting_ensemble_with_overlapping"] + voting_ensemble_overlapping_indicators,
             ]
         ), columns=metrics_headers)
 
