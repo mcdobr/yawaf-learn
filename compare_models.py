@@ -31,6 +31,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
+from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
 NORMAL_LABEL = 0
@@ -625,7 +626,6 @@ def pca(x_train, y_train, x_test, y_test):
     anomaly_points = np.array(
         [labeled_point[0] for labeled_point in labeled_points if labeled_point[1] == ANOMALOUS_LABEL])
 
-    print(normal_points)
     fig, axes = plt.subplots()
     axes.scatter(
         x=anomaly_points[:, 0],
@@ -653,8 +653,11 @@ def pca(x_train, y_train, x_test, y_test):
 
 def preprocess_http_request_for_vectorization(raw_requests):
     concatenated_requests = []
+    logging.debug(raw_requests[0].keys())
+    logging.debug(raw_requests[0].values())
     for raw_request in raw_requests:
-        concatenated_requests.append(' '.join(value for value in raw_request.values() if value != 'Class'))
+        concatenated_requests.append(
+            ' '.join(value for key, value in raw_request.items() if key in ['Path', 'Query', 'Body']))
 
     request_labels = [NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL for raw_request in
                       raw_requests]
@@ -667,8 +670,13 @@ def text_analysis_pipeline(classifier):
     from sklearn.feature_selection import SelectKBest
     text_pipeline = Pipeline(
         [
-            ('tfidf', TfidfVectorizer(ngram_range=(1, 2))),
-            ('feature_reduction', SelectKBest(k=10)),
+            ('tfidf', TfidfVectorizer(
+                max_df=0.8,
+                min_df=3,
+                use_idf=True,
+                analyzer='char',
+                ngram_range=(1, 2))),
+            ('feature_reduction', SelectKBest(k=25)),
             ('classifier', classifier)
         ])
     return text_pipeline
@@ -681,14 +689,23 @@ def bag_of_words(requests, classifier):
     x_train = x_train['Text']
     x_test = x_test['Text']
     text_classifier = text_analysis_pipeline(classifier)
+
+    logging.debug(x_train)
     text_classifier.fit(x_train, y_train)
     y_pred = text_classifier.predict(x_test)
+    x_train_numerical = text_classifier.named_steps['tfidf'].transform(x_train)
+    x_test_numerical = text_classifier.named_steps['tfidf'].transform(x_test)
 
-    # x_train_numerical = text_classifier.named_steps['tfidf'].transform(x_train)
-    # x_test_numerical = text_classifier.named_steps['tfidf'].transform(x_test)
-    # pca(x_train_numerical, y_train, x_test_numerical, y_test)
+    logging.debug(text_classifier.named_steps['tfidf'].get_feature_names())
+
+    logging.debug("Train text shape {}".format(x_train_numerical.shape))
+    logging.debug("Test text shape {}".format(x_test_numerical.shape))
+
     from sklearn.metrics import classification_report
     logging.info("Classification report: {}".format(classification_report(y_true=y_test, y_pred=y_pred, digits=4)))
+    tn, fp, fn, tp = confusion_matrix(y_true=y_test, y_pred=y_pred).ravel()
+    fpr = fp / (fp + tn)
+    logging.info("FPR = {}".format(fpr))
     return text_classifier
 
 
@@ -913,11 +930,9 @@ def main():
     logging.info("Starting analysis...")
     requests = load_csic()
 
-    # tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
-    # persist_classifier("tfidf_logistic_regression", tfidf_logistic_regression, requests)
-
-    # tfidf_multinomial_naive_bayes = bag_of_words(requests, MultinomialNB())
-    # persist_classifier("tfidf_multinomial_naive_bayes", tfidf_multinomial_naive_bayes, requests)
+    tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
+    tfidf_linear_svc = bag_of_words(requests, LinearSVC())
+    tfidf_decision_tree = bag_of_words(requests, DecisionTreeClassifier())
 
     df = custom_features(requests)
     # plot_heatmap(df)
@@ -1021,10 +1036,11 @@ def main():
                           x_train,
                           y_train)
 
-    voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
-    save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results, voting_ensemble_overlapping_indicators, x_train,
+    voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = voting_ensemble(x_train, y_train,
+                                                                                                       x_test, y_test)
+    save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results,
+                          voting_ensemble_overlapping_indicators, x_train,
                           y_train)
-
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
