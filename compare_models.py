@@ -992,7 +992,7 @@ def main():
                                                            classifier=random_forest_grid_results.best_estimator_),
                            x_dataset, y_dataset)
 
-    extra_trees_performance_indicators, extra_trees_grid = random_forest(x_train, y_train, x_test, y_test)
+    extra_trees_performance_indicators, extra_trees_grid = extra_trees(x_train, y_train, x_test, y_test)
     save_test_performance("Extra trees", extra_trees_grid, extra_trees_performance_indicators, x_train,
                           y_train)
 
