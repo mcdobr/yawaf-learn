@@ -10,3 +10,4 @@ venv/
 *.result
 *.log
 *.txt
+*.png

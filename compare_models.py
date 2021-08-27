@@ -503,7 +503,11 @@ def random_forest(x_train, y_train, x_test, y_test):
 
 def extra_trees(x_train, y_train, x_test, y_test):
     from sklearn.ensemble import ExtraTreesClassifier
-    extra_forest = ExtraTreesClassifier()
+    extra_forest = ExtraTreesClassifier(n_jobs=-1)
+
+    initial_parameter_grid = {
+        'n_estimators': [100, 1000]
+    }
 
     best_parameter_grid = {
         'n_estimators': [1000]
@@ -529,15 +533,21 @@ def mlp(x_train, y_train, x_test, y_test):
     from sklearn.neural_network import MLPClassifier
     mlp_model = MLPClassifier()
 
-    parameter_grid = dict(
-        # /*(50, 50, 50), (50, 100, 50),
-        hidden_layer_sizes=[(100,)],
-        alpha=[0.0001],  # 0.01,
-        activation=['relu'],  # tanh
+    initial_parameter_grid = dict(
+        hidden_layer_sizes=[(100,), (50, 50), (50, 50, 50), (50, 100, 50)],
+        alpha=[0.0001, 0.001, 0.01, 0.1],
+        activation=['relu', 'tanh'],  # tanh
         max_iter=[1000],
-        learning_rate=['constant']  # adaptive
+        learning_rate=['constant', 'adaptive']  # adaptive
     )
-    grid_search = grid_search_best_parameters(parameter_grid, mlp_model, x_train, y_train)
+    best_parameter_grid = dict(
+        hidden_layer_sizes=[(100,)],
+        alpha=[0.0001],
+        activation=['relu'],
+        max_iter=[1000],
+        learning_rate=['constant'],
+    )
+    grid_search = grid_search_best_parameters(initial_parameter_grid, mlp_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -657,7 +667,7 @@ def preprocess_http_request_for_vectorization(raw_requests):
     logging.debug(raw_requests[0].values())
     for raw_request in raw_requests:
         concatenated_requests.append(
-            ' '.join(value for key, value in raw_request.items() if key in ['Path', 'Query', 'Body']))
+            ' '.join(value for key, value in raw_request.items() if key not in ['Class']))
 
     request_labels = [NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL for raw_request in
                       raw_requests]
@@ -667,7 +677,6 @@ def preprocess_http_request_for_vectorization(raw_requests):
 def text_analysis_pipeline(classifier):
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.feature_selection import SelectKBest
     text_pipeline = Pipeline(
         [
             ('tfidf', TfidfVectorizer(
@@ -676,7 +685,6 @@ def text_analysis_pipeline(classifier):
                 use_idf=True,
                 analyzer='char',
                 ngram_range=(1, 2))),
-            ('feature_reduction', SelectKBest(k=25)),
             ('classifier', classifier)
         ])
     return text_pipeline
@@ -733,7 +741,7 @@ def voting_ensemble(x_train, y_train, x_test, y_test):
 
 
 def voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test):
-    pipeline = Pipeline([
+    classifiers = [
         Pipeline([
             ('sel_dt', SelectKBest(k=5)),
             ('dt', DecisionTreeClassifier()),
@@ -745,12 +753,15 @@ def voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test)
         Pipeline([
             ('sel_knn', SelectKBest(k='all')),
             ('knn', KNeighborsClassifier(n_neighbors=3)),
-        ]),
-    ])
+        ]
+        )
+    ]
+
+    voting_ensemble_overlapping = VotingClassifier(classifiers)
 
     parameter_grid = {
     }
-    grid_search = grid_search_best_parameters(parameter_grid, pipeline, x_train, y_train)
+    grid_search = grid_search_best_parameters(parameter_grid, voting_ensemble_overlapping, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -779,9 +790,10 @@ def arbitrary_stack(x_train, y_train, x_test, y_test):
         estimators=models,
         final_estimator=None,  # Logistic regression
         n_jobs=-1)
-    parameter_grid = dict(
-    )
-    grid_search = grid_search_best_parameters(parameter_grid, stack, x_train, y_train)
+    initial_parameter_grid = {
+
+    }
+    grid_search = grid_search_best_parameters(initial_parameter_grid, stack, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -898,6 +910,7 @@ def plot_model_cv_performance(estimator, title, X, y, axes=None, ylim=None, cv=N
     axes[2].set_ylabel("Score")
     axes[2].set_title("Performance of the model")
 
+    plt.savefig(f'{title}.png')
     plt.show()
 
 
@@ -917,6 +930,18 @@ def gradient_boosting(x_train, y_train, x_test, y_test):
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
 
 
+def plot_test_metric_curves(title, classifier, x_test, y_test):
+    from sklearn.metrics import plot_roc_curve
+    curve = plot_roc_curve(classifier, x_test, y_test, name=title, pos_label=ANOMALOUS_LABEL)
+    curve.ax_.grid(linestyle='--')
+    curve.ax_.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
+                   label='Chance', alpha=.8)
+    curve.figure_.suptitle(f'{title} Receiver operating characteristic (ROC) curve')
+    plt.savefig(f'{title}-roc.png')
+    plt.show()
+    return curve
+
+
 def main():
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(funcName)s:  %(message)s",
@@ -930,9 +955,9 @@ def main():
     logging.info("Starting analysis...")
     requests = load_csic()
 
-    tfidf_logistic_regression = bag_of_words(requests, LogisticRegression())
-    tfidf_linear_svc = bag_of_words(requests, LinearSVC())
-    tfidf_decision_tree = bag_of_words(requests, DecisionTreeClassifier())
+    # tfidf_logistic_regression = bag_of_words(requests, LogisticRegression(max_iter=1000))
+    # tfidf_linear_svc = bag_of_words(requests, LinearSVC())
+    # tfidf_decision_tree = bag_of_words(requests, DecisionTreeClassifier())
 
     df = custom_features(requests)
     # plot_heatmap(df)
@@ -962,6 +987,7 @@ def main():
     best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
     save_test_performance("Logistic regression", logistic_grid_results, best_logistic_regression_indicators, x_train,
                           y_train)
+    plot_test_metric_curves("Logistic regression", logistic_grid_results.best_estimator_, x_test, y_test)
     create_persisted_model("logistic_regression",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=logistic_grid_results.best_estimator_),
@@ -970,16 +996,22 @@ def main():
 
     best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
     save_test_performance("Linear SVM", linear_svm_grid_results, best_linear_svm_indicators, x_train, y_train)
+    plot_test_metric_curves("Linear SVM with kernel approximation",
+                            linear_svm_grid_results.best_estimator_, x_test, y_test)
 
     best_linear_svm_with_kernel_approximation_indicators, best_linear_svm_with_kernel_approximation_grid_results = linear_svm_with_kernel_approximation(
         x_train, y_train, x_test, y_test)
     save_test_performance("Linear SVM with kernel approximation",
                           best_linear_svm_with_kernel_approximation_grid_results,
                           best_linear_svm_with_kernel_approximation_indicators, x_train, y_train)
+    plot_test_metric_curves("Linear SVM with kernel approximation",
+                            best_linear_svm_with_kernel_approximation_grid_results.best_estimator_, x_test, y_test)
 
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     save_test_performance("Decision Tree", decision_tree_grid_results, decision_tree_performance_indicators, x_train,
                           y_train)
+    plot_test_metric_curves("Decision Tree", decision_tree_grid_results.best_estimator_, x_test,
+                            y_test)
     create_persisted_model("decision_tree", create_custom_features_pipeline(scaler=scaler,
                                                                             classifier=decision_tree_grid_results.best_estimator_),
                            x_dataset, y_dataset)
@@ -987,6 +1019,8 @@ def main():
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     save_test_performance("Random Forest", random_forest_grid_results, random_forest_performance_indicators, x_train,
                           y_train)
+    plot_test_metric_curves("Random Forest", random_forest_grid_results.best_estimator_, x_test,
+                            y_test)
     create_persisted_model("random_forest",
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=random_forest_grid_results.best_estimator_),
@@ -995,15 +1029,21 @@ def main():
     extra_trees_performance_indicators, extra_trees_grid = extra_trees(x_train, y_train, x_test, y_test)
     save_test_performance("Extra trees", extra_trees_grid, extra_trees_performance_indicators, x_train,
                           y_train)
+    plot_test_metric_curves("Extra trees", extra_trees_grid.best_estimator_, x_test,
+                            y_test)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     save_test_performance("Multi layer perceptron", mlp_grid_results, mlp_performance_indicators, x_train, y_train)
     create_persisted_model("mlp",
                            create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
                            x_train, y_train)
+    plot_test_metric_curves("Multi layer perceptron", mlp_grid_results.best_estimator_, x_test,
+                            y_test)
 
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     save_test_performance("K nearest neighbors", knn_grid_results, knn_performance_indicators, x_train, y_train)
+    plot_test_metric_curves("K nearest neighbors", knn_grid_results.best_estimator_, x_test,
+                            y_test)
     create_persisted_model("knn",
                            create_custom_features_pipeline(scaler=scaler, classifier=knn_grid_results.best_estimator_),
                            x_dataset, y_dataset)
@@ -1011,6 +1051,8 @@ def main():
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
     save_test_performance("Stochastic gradient descent classifier", sgd_grid_results, sgd_performance_indicators,
                           x_train, y_train)
+    plot_test_metric_curves("Stochastic gradient descent classifier", sgd_grid_results.best_estimator_, x_test,
+                            y_test)
     create_persisted_model("sgd",
                            create_custom_features_pipeline(scaler=scaler, classifier=sgd_grid_results.best_estimator_),
                            x_dataset, y_dataset)
@@ -1022,25 +1064,29 @@ def main():
 
     bagging_knn_perf_indicators, bagging_knn_grid_results = bagging_knn(x_train, y_train, x_test, y_test)
     save_test_performance("Bagging kNN (k=1)", bagging_knn_grid_results, bagging_knn_perf_indicators, x_train, y_train)
+    plot_test_metric_curves("Bagging kNN (k=1)", bagging_knn_grid_results.best_estimator_, x_test, y_test)
 
     voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_indicators, x_train,
                           y_train)
+    plot_test_metric_curves("Voting ensemble", voting_ensemble_grid_results.best_estimator_, x_test, y_test)
 
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
+    plot_test_metric_curves("Stacked ensemble", stack_grid_results.best_estimator_, x_test, y_test)
 
     gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test,
                                                                                           y_test)
     save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators,
-                          x_train,
-                          y_train)
+                          x_train, y_train)
+    plot_test_metric_curves("Gradient boosting", gradient_boosting_grid_results.best_estimator_, x_test, y_test)
 
-    voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = voting_ensemble(x_train, y_train,
-                                                                                                       x_test, y_test)
+    voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = \
+        voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results,
-                          voting_ensemble_overlapping_indicators, x_train,
-                          y_train)
+                          voting_ensemble_overlapping_indicators, x_train, y_train)
+    plot_test_metric_curves("Voting ensemble with overlapping",
+                            voting_ensemble_overlapping_grid_results.best_estimator_, x_test, y_test)
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
