@@ -547,7 +547,7 @@ def mlp(x_train, y_train, x_test, y_test):
         max_iter=[1000],
         learning_rate=['constant'],
     )
-    grid_search = grid_search_best_parameters(initial_parameter_grid, mlp_model, x_train, y_train)
+    grid_search = grid_search_best_parameters(best_parameter_grid, mlp_model, x_train, y_train)
 
     y_test_pred = pd.DataFrame(grid_search.best_estimator_.predict(x_test))
     return compute_indicators(y_true=y_test, y_pred=y_test_pred), grid_search
@@ -741,23 +741,20 @@ def voting_ensemble(x_train, y_train, x_test, y_test):
 
 
 def voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test):
-    classifiers = [
-        Pipeline([
+    voting_ensemble_overlapping = VotingClassifier(estimators=[
+        ('dt_fs', Pipeline([
             ('sel_dt', SelectKBest(k=5)),
             ('dt', DecisionTreeClassifier()),
-        ]),
-        Pipeline([
+        ])),
+        ('mlp_fs', Pipeline([
             ('sel_mlp', SelectKBest(k=10)),
             ('mlp', MLPClassifier(max_iter=1000)),
-        ]),
-        Pipeline([
+        ])),
+        ('knn_fs', Pipeline([
             ('sel_knn', SelectKBest(k='all')),
             ('knn', KNeighborsClassifier(n_neighbors=3)),
-        ]
-        )
-    ]
-
-    voting_ensemble_overlapping = VotingClassifier(classifiers)
+        ]))
+    ])
 
     parameter_grid = {
     }
@@ -1069,24 +1066,19 @@ def main():
     voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_indicators, x_train,
                           y_train)
-    plot_test_metric_curves("Voting ensemble", voting_ensemble_grid_results.best_estimator_, x_test, y_test)
 
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
-    plot_test_metric_curves("Stacked ensemble", stack_grid_results.best_estimator_, x_test, y_test)
 
     gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test,
                                                                                           y_test)
     save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators,
                           x_train, y_train)
-    plot_test_metric_curves("Gradient boosting", gradient_boosting_grid_results.best_estimator_, x_test, y_test)
 
     voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = \
         voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results,
                           voting_ensemble_overlapping_indicators, x_train, y_train)
-    plot_test_metric_curves("Voting ensemble with overlapping",
-                            voting_ensemble_overlapping_grid_results.best_estimator_, x_test, y_test)
 
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
