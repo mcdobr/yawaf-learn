@@ -1,6 +1,7 @@
 *.iml
 *.pmml
 *.onnx
+*.joblib
 .idea/workspace.xml
 
 data/
