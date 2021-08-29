@@ -12,6 +12,7 @@ import sys
 import urllib.parse
 import logging
 
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -315,6 +316,8 @@ def create_persisted_model(name, pipeline, x, y):
     """This persists the model after being fitted with the whole dataset, to allow deployment to production
     :param y:
     """
+
+    joblib.dump(pipeline, f'models/{name}.joblib')
     from onnxconverter_common import StringTensorType
 
     # ZipMap not supported by tract so this would enable at least a few models to be used
@@ -335,7 +338,7 @@ def create_persisted_model(name, pipeline, x, y):
             options=options,
             target_opset=10
         )
-    with open(f'{name}.onnx', "wb") as onnx_file:
+    with open(f'models/onnx/{name}.onnx', "wb") as onnx_file:
         onnx_file.write(onnx_model.SerializeToString())
     return onnx_model
 
@@ -907,7 +910,7 @@ def plot_model_cv_performance(estimator, title, X, y, axes=None, ylim=None, cv=N
     axes[2].set_ylabel("Score")
     axes[2].set_title("Performance of the model")
 
-    plt.savefig(f'{title}.png')
+    plt.savefig(f'plots/{title}.png')
     plt.show()
 
 
@@ -944,7 +947,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(funcName)s:  %(message)s",
         level=logging.INFO,
         handlers=[
-            logging.FileHandler("learn.log"),
+            logging.FileHandler("log/learn.log"),
             logging.StreamHandler(sys.stdout),
         ]
     )
@@ -1102,7 +1105,7 @@ def main():
             ]
         ), columns=metrics_headers)
 
-    metrics_df.to_csv(f'results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
+    metrics_df.to_csv(f'results/results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
     logging.info("Wrote values to CSV file")
     logging.info("Ended analysis...")
 
