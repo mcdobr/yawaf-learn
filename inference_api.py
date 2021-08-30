@@ -19,7 +19,6 @@ def predict():
 
     raw_request = {
         "Method": data["method"],
-        "Host": data["host"],
         "Path": data["path"],
         "Query": data["query"],
         "Body": data["body"],
