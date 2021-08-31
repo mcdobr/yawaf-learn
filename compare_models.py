@@ -7,6 +7,7 @@
 import collections
 import csv
 import datetime
+import math
 import re
 import sys
 import urllib.parse
@@ -139,7 +140,9 @@ def non_printable_characters(request_dict):
 
 def entropy(request_dict):
     reconstructed_request = ''.join(list(request_dict.values()))
-    return -1 * sum(i / len(reconstructed_request) for i in collections.Counter(reconstructed_request).values())
+    entropy_value = -1 * sum(i / len(reconstructed_request) * math.log2(i / len(reconstructed_request)) for i in collections.Counter(reconstructed_request).values())
+    print("Entropy value: {}".format(entropy_value))
+    return entropy_value
 
 
 def url_length(request_dict):
@@ -965,7 +968,7 @@ def main():
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
 
-    # get_random_forest_feature_importance(x_train, y_train)
+    get_random_forest_feature_importance(x_train, y_train)
 
     # Scale the values based on the training data
     # todo: maybe put the scaler in individual pipelines?
@@ -1033,6 +1036,7 @@ def main():
                             y_test)
 
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
+    logging.info('{}'.format(mlp_grid_results.best_estimator_))
     save_test_performance("Multi layer perceptron", mlp_grid_results, mlp_performance_indicators, x_train, y_train)
     create_persisted_model("mlp",
                            create_custom_features_pipeline(scaler=scaler, classifier=mlp_grid_results.best_estimator_),
@@ -1122,6 +1126,16 @@ def get_random_forest_feature_importance(x_train, y_train):
     rf = RandomForestClassifier()
     rf.fit(x_train, y_train)
     sorted_features = sorted(zip(map(lambda x: round(x, 4), rf.feature_importances_), x_train), reverse=True)
+
+    df_feature_importance = pd.DataFrame(rf.feature_importances_,
+                                         index=x_train.columns,
+                                         columns=['feature importance'])\
+        .sort_values('feature importance', ascending=False)
+
+    print()
+    plt.tight_layout()
+    df_feature_importance.plot(kind='bar')
+
     logging.info("Sorted features by random forest importance: {}".format(sorted_features))
     return sorted_features
 
