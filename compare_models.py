@@ -141,7 +141,6 @@ def non_printable_characters(request_dict):
 def entropy(request_dict):
     reconstructed_request = ''.join(list(request_dict.values()))
     entropy_value = -1 * sum(i / len(reconstructed_request) * math.log2(i / len(reconstructed_request)) for i in collections.Counter(reconstructed_request).values())
-    print("Entropy value: {}".format(entropy_value))
     return entropy_value
 
 
@@ -379,7 +378,7 @@ def custom_features(raw_requests):
         'Attribute length': data_points[:, 0],
         'Number of letters': data_points[:, 1],
         # 'Non printable characters': data_points[:, 2],
-        'Entropy': data_points[:, 3],
+        # 'Entropy': data_points[:, 3],
         'URL length': data_points[:, 4],
         'Non alphabetical chars in path': data_points[:, 5],
         'SQL keywords': data_points[:, 6],
