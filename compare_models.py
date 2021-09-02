@@ -140,7 +140,8 @@ def non_printable_characters(request_dict):
 
 def entropy(request_dict):
     reconstructed_request = ''.join(list(request_dict.values()))
-    entropy_value = -1 * sum(i / len(reconstructed_request) * math.log2(i / len(reconstructed_request)) for i in collections.Counter(reconstructed_request).values())
+    entropy_value = -1 * sum(i / len(reconstructed_request) * math.log2(i / len(reconstructed_request)) for i in
+                             collections.Counter(reconstructed_request).values())
     return entropy_value
 
 
@@ -346,6 +347,7 @@ def create_persisted_model(name, pipeline, x, y):
 
 
 def custom_features(raw_requests):
+    logging.info("Starting analysis...")
     data_points_list = []
     for raw_request in raw_requests:
         min_byte, max_byte, mean_byte, median_byte, unique_bytes = byte_distribution(raw_request)
@@ -666,44 +668,29 @@ def pca(x_train, y_train, x_test, y_test):
     plt.show()
 
 
-def preprocess_http_request_for_vectorization(raw_requests):
-    concatenated_requests = []
-    logging.debug(raw_requests[0].keys())
-    logging.debug(raw_requests[0].values())
-    for raw_request in raw_requests:
-        concatenated_requests.append(
-            ' '.join(value for key, value in raw_request.items() if key not in ['Class']))
-
-    request_labels = [NORMAL_LABEL if raw_request.get('Class') == 'Normal' else ANOMALOUS_LABEL for raw_request in
-                      raw_requests]
-    return pd.DataFrame({'Text': concatenated_requests, 'Label': request_labels})
-
-
-def text_analysis_pipeline(classifier):
+def text_analysis_pipeline(classifier, ngram_range):
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
     text_pipeline = Pipeline(
         [
             ('tfidf', TfidfVectorizer(
-                max_df=0.8,
-                min_df=3,
+                max_features=1024,
+                max_df=0.9,
+                min_df=5,
                 use_idf=True,
                 analyzer='char',
-                ngram_range=(1, 2))),
+                ngram_range=ngram_range)),
             ('classifier', classifier)
         ])
     return text_pipeline
 
 
-def bag_of_words(requests, classifier):
-    dataset = preprocess_http_request_for_vectorization(requests)
-    x_train, y_train, x_test, y_test = split_train_test(dataset, 0.8)
-    # Coerce to arrays
-    x_train = x_train['Text']
-    x_test = x_test['Text']
-    text_classifier = text_analysis_pipeline(classifier)
+def ngram_classification(x_train, y_train, x_test, y_test, classifier, ngram_range):
+    text_classifier = text_analysis_pipeline(classifier, ngram_range)
 
-    logging.debug(x_train)
+    # logging.debug(x_train)
+
+    grid_search_best_parameters({}, text_classifier, x_train, y_train)
     text_classifier.fit(x_train, y_train)
     y_pred = text_classifier.predict(x_test)
     x_train_numerical = text_classifier.named_steps['tfidf'].transform(x_train)
@@ -711,14 +698,16 @@ def bag_of_words(requests, classifier):
 
     logging.debug(text_classifier.named_steps['tfidf'].get_feature_names())
 
-    logging.debug("Train text shape {}".format(x_train_numerical.shape))
-    logging.debug("Test text shape {}".format(x_test_numerical.shape))
+    logging.info("Train text shape {}".format(x_train_numerical.shape))
+    logging.info("Test text shape {}".format(x_test_numerical.shape))
 
     from sklearn.metrics import classification_report
     logging.info("Classification report: {}".format(classification_report(y_true=y_test, y_pred=y_pred, digits=4)))
     tn, fp, fn, tp = confusion_matrix(y_true=y_test, y_pred=y_pred).ravel()
     fpr = fp / (fp + tn)
     logging.info("FPR = {}".format(fpr))
+    mcc = matthews_corrcoef(y_true=y_test, y_pred=y_pred)
+    print("MCC: {}".format(mcc))
     return text_classifier
 
 
@@ -944,6 +933,28 @@ def plot_test_metric_curves(title, classifier, x_test, y_test):
     return curve
 
 
+def read_raw_requests():
+    files = [
+        ('data/csic2010/normalTrafficTraining.txt', NORMAL_LABEL),
+        ('data/csic2010/normalTrafficTest.txt', NORMAL_LABEL),
+        ('data/csic2010/anomalousTrafficTest.txt', ANOMALOUS_LABEL)
+    ]
+
+    requests = []
+    labels = []
+    for _, tuple in enumerate(files):
+        input_file_name = tuple[0]
+        logging.debug("{}".format(input_file_name))
+        label = tuple[1]
+        with open(input_file_name, 'rt') as input_file_name:
+            raw_requests_text = input_file_name.read()
+            raw_requests = re.split('\n\n\n', raw_requests_text)
+            requests += raw_requests
+            labels += [label] * len(raw_requests)
+
+    return pd.DataFrame({'Text': requests, 'Label': labels})
+
+
 def main():
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(funcName)s:  %(message)s",
@@ -954,38 +965,85 @@ def main():
         ]
     )
 
-    logging.info("Starting analysis...")
-    requests = load_csic()
+    requests = read_raw_requests()
+    print(requests.head(10))
+    x_train, y_train, x_test, y_test = split_train_test(requests, 0.8)
+    # Coerce to arrays
+    x_train = x_train['Text']
+    x_test = x_test['Text']
 
-    # tfidf_logistic_regression = bag_of_words(requests, LogisticRegression(max_iter=1000))
-    # tfidf_linear_svc = bag_of_words(requests, LinearSVC())
+    logging.info("dt ngram=(1,1)")
+    tfidf_dt_1gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           DecisionTreeClassifier(), ngram_range=(1, 1))
+
+    logging.info("dt ngram=(2,2)")
+    tfidf_dt_2gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           DecisionTreeClassifier(), ngram_range=(2, 2))
+
+    logging.info("dt ngram=(3,3)")
+    tfidf_dt_3gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           DecisionTreeClassifier(), ngram_range=(3, 3))
+    logging.info("dt ngram=(4,4)")
+    tfidf_dt_4gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           DecisionTreeClassifier(), ngram_range=(4, 4))
+    logging.info("dt ngram=(5,5)")
+    tfidf_dt_5gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           DecisionTreeClassifier(), ngram_range=(5, 5))
+
+
+
+    logging.info("logreg ngram=(1,1)")
+    tfidf_dt_1gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           LogisticRegression(max_iter=1000), ngram_range=(1, 1))
+
+    logging.info("logreg ngram=(2,2)")
+    tfidf_dt_2gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           LogisticRegression(max_iter=1000), ngram_range=(2, 2))
+
+    logging.info("logreg ngram=(3,3)")
+    tfidf_logistic_regression_3gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           LogisticRegression(max_iter=1000), ngram_range=(3, 3))
+    logging.info("logreg ngram=(4,4)")
+    tfidf_logistic_regression_4gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           LogisticRegression(max_iter=1000), ngram_range=(4, 4))
+    logging.info("logreg ngram=(5,5)")
+    tfidf_logistic_regression_5gram = ngram_classification(x_train, y_train, x_test, y_test,
+                                                           LogisticRegression(max_iter=1000), ngram_range=(5, 5))
+
+    logging.info("Linear svc ngram = (1,1)")
+    tfidf_linear_svc = ngram_classification(x_train, y_train, x_test, y_test, LinearSVC(), ngram_range=(1, 1))
+    logging.info("Linear svc ngram = (2,2)")
+    tfidf_linear_svc = ngram_classification(x_train, y_train, x_test, y_test, LinearSVC(), ngram_range=(2, 2))
+    logging.info("Linear svc ngram = (3,3)")
+    tfidf_linear_svc = ngram_classification(x_train, y_train, x_test, y_test, LinearSVC(), ngram_range=(3, 3))
+    logging.info("Linear svc ngram = (4,4)")
+    tfidf_linear_svc = ngram_classification(x_train, y_train, x_test, y_test, LinearSVC(), ngram_range=(4, 4))
+    logging.info("Linear svc ngram = (5,5)")
+    tfidf_linear_svc = ngram_classification(x_train, y_train, x_test, y_test, LinearSVC(), ngram_range=(5, 5))
     # tfidf_decision_tree = bag_of_words(requests, DecisionTreeClassifier())
 
+    requests = load_csic()
     df = custom_features(requests)
-    # plot_heatmap(df)
+    evaluate_models_over_expert_knowledge_features(df)
 
+
+def evaluate_models_over_expert_knowledge_features(df):
+    # plot_heatmap(df)
     # plot_histograms(df)
     x_train, y_train, x_test, y_test = split_train_test(df, 0.8)
-
     get_random_forest_feature_importance(x_train, y_train)
-
     # Scale the values based on the training data
     # todo: maybe put the scaler in individual pipelines?
     scaler = preprocessing.StandardScaler().fit(x_train[x_train.columns])
     x_train[x_train.columns] = scaler.transform(x_train[x_train.columns])
     x_test[x_train.columns] = scaler.transform(x_test[x_test.columns])
-
     # Do principal component analysis on whole dataset for plotting purposes (visualizing whole data)
     # pca(x_train, y_train, x_test, y_test)
-
     x_dataset = pd.concat([x_train, x_test])
     y_dataset = pd.concat([y_train, y_test])
-
     logging.info("Dataset description {}".format(x_dataset.describe()))
-
     baseline_results = dummy_baseline(x_train, y_train, x_test, y_test)
     logging.info("Baseline results: {}".format(baseline_results))
-
     best_logistic_regression_indicators, logistic_grid_results = logistic_regression(x_train, y_train, x_test, y_test)
     save_test_performance("Logistic regression", logistic_grid_results, best_logistic_regression_indicators, x_train,
                           y_train)
@@ -995,12 +1053,10 @@ def main():
                                                            classifier=logistic_grid_results.best_estimator_),
                            x_dataset,
                            y_dataset)
-
     best_linear_svm_indicators, linear_svm_grid_results = linear_svm(x_train, y_train, x_test, y_test)
     save_test_performance("Linear SVM", linear_svm_grid_results, best_linear_svm_indicators, x_train, y_train)
     plot_test_metric_curves("Linear SVM with kernel approximation",
                             linear_svm_grid_results.best_estimator_, x_test, y_test)
-
     best_linear_svm_with_kernel_approximation_indicators, best_linear_svm_with_kernel_approximation_grid_results = linear_svm_with_kernel_approximation(
         x_train, y_train, x_test, y_test)
     save_test_performance("Linear SVM with kernel approximation",
@@ -1008,7 +1064,6 @@ def main():
                           best_linear_svm_with_kernel_approximation_indicators, x_train, y_train)
     plot_test_metric_curves("Linear SVM with kernel approximation",
                             best_linear_svm_with_kernel_approximation_grid_results.best_estimator_, x_test, y_test)
-
     decision_tree_performance_indicators, decision_tree_grid_results = decision_tree(x_train, y_train, x_test, y_test)
     save_test_performance("Decision Tree", decision_tree_grid_results, decision_tree_performance_indicators, x_train,
                           y_train)
@@ -1017,7 +1072,6 @@ def main():
     create_persisted_model("decision_tree", create_custom_features_pipeline(scaler=scaler,
                                                                             classifier=decision_tree_grid_results.best_estimator_),
                            x_dataset, y_dataset)
-
     random_forest_performance_indicators, random_forest_grid_results = random_forest(x_train, y_train, x_test, y_test)
     save_test_performance("Random Forest", random_forest_grid_results, random_forest_performance_indicators, x_train,
                           y_train)
@@ -1027,13 +1081,11 @@ def main():
                            create_custom_features_pipeline(scaler=scaler,
                                                            classifier=random_forest_grid_results.best_estimator_),
                            x_dataset, y_dataset)
-
     extra_trees_performance_indicators, extra_trees_grid = extra_trees(x_train, y_train, x_test, y_test)
     save_test_performance("Extra trees", extra_trees_grid, extra_trees_performance_indicators, x_train,
                           y_train)
     plot_test_metric_curves("Extra trees", extra_trees_grid.best_estimator_, x_test,
                             y_test)
-
     mlp_performance_indicators, mlp_grid_results = mlp(x_train, y_train, x_test, y_test)
     logging.info('{}'.format(mlp_grid_results.best_estimator_))
     save_test_performance("Multi layer perceptron", mlp_grid_results, mlp_performance_indicators, x_train, y_train)
@@ -1042,7 +1094,6 @@ def main():
                            x_train, y_train)
     plot_test_metric_curves("Multi layer perceptron", mlp_grid_results.best_estimator_, x_test,
                             y_test)
-
     knn_performance_indicators, knn_grid_results = knn(x_train, y_train, x_test, y_test)
     save_test_performance("K nearest neighbors", knn_grid_results, knn_performance_indicators, x_train, y_train)
     plot_test_metric_curves("K nearest neighbors", knn_grid_results.best_estimator_, x_test,
@@ -1050,7 +1101,6 @@ def main():
     create_persisted_model("knn",
                            create_custom_features_pipeline(scaler=scaler, classifier=knn_grid_results.best_estimator_),
                            x_dataset, y_dataset)
-
     sgd_performance_indicators, sgd_grid_results = sgd(x_train, y_train, x_test, y_test)
     save_test_performance("Stochastic gradient descent classifier", sgd_grid_results, sgd_performance_indicators,
                           x_train, y_train)
@@ -1059,33 +1109,26 @@ def main():
     create_persisted_model("sgd",
                            create_custom_features_pipeline(scaler=scaler, classifier=sgd_grid_results.best_estimator_),
                            x_dataset, y_dataset)
-
     disjoint_subspace_voting_perf_results = arbitrary_disjoint_subspace_voting_ensemble(x_train, y_train, x_test,
                                                                                         y_test)
     save_test_performance("Disjoint subspace voting ensemble (kNN, RF, MLP)", None,
                           disjoint_subspace_voting_perf_results, x_train, y_train)
-
     bagging_knn_perf_indicators, bagging_knn_grid_results = bagging_knn(x_train, y_train, x_test, y_test)
     save_test_performance("Bagging kNN (k=1)", bagging_knn_grid_results, bagging_knn_perf_indicators, x_train, y_train)
     plot_test_metric_curves("Bagging kNN (k=1)", bagging_knn_grid_results.best_estimator_, x_test, y_test)
-
     voting_ensemble_indicators, voting_ensemble_grid_results = voting_ensemble(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble", voting_ensemble_grid_results, voting_ensemble_indicators, x_train,
                           y_train)
-
     stack_perf_indicators, stack_grid_results = arbitrary_stack(x_train, y_train, x_test, y_test)
     save_test_performance("Stacked ensemble", stack_grid_results, stack_perf_indicators, x_train, y_train)
-
     gradient_boosting_perf_indicators, gradient_boosting_grid_results = gradient_boosting(x_train, y_train, x_test,
                                                                                           y_test)
     save_test_performance("Gradient boosting", gradient_boosting_grid_results, gradient_boosting_perf_indicators,
                           x_train, y_train)
-
     voting_ensemble_overlapping_indicators, voting_ensemble_overlapping_grid_results = \
         voting_ensemble_overlapping_feature_subset(x_train, y_train, x_test, y_test)
     save_test_performance("Voting ensemble with overlapping", voting_ensemble_overlapping_grid_results,
                           voting_ensemble_overlapping_indicators, x_train, y_train)
-
     logging.info("Writing values to CSV file")
     metrics_headers = ["name", "accuracy", "weighted precision", "weighted recall", "weighted f_score", "mcc", "fpr",
                        "tn", "fp", "fn", "tp"]
@@ -1107,7 +1150,6 @@ def main():
                 ["voting_ensemble_with_overlapping"] + voting_ensemble_overlapping_indicators,
             ]
         ), columns=metrics_headers)
-
     metrics_df.to_csv(f'results/results-{datetime.datetime.now().replace(microsecond=0).isoformat()}.csv', index=False)
     logging.info("Wrote values to CSV file")
     logging.info("Ended analysis...")
@@ -1128,12 +1170,12 @@ def get_random_forest_feature_importance(x_train, y_train):
 
     df_feature_importance = pd.DataFrame(rf.feature_importances_,
                                          index=x_train.columns,
-                                         columns=['feature importance'])\
-        .sort_values('feature importance', ascending=False)
+                                         columns=['feature importance']) \
+        .sort_values('feature importance', ascending=True)
 
     print()
     plt.tight_layout()
-    df_feature_importance.plot(kind='bar')
+    df_feature_importance.plot(kind='barh', figsize=(18, 8))
 
     logging.info("Sorted features by random forest importance: {}".format(sorted_features))
     return sorted_features
